@@ -39,6 +39,7 @@ fun TraeloApp(vm: TraeloViewModel) {
     val baseDir by vm.baseDir.collectAsStateWithLifecycle()
     val launchDirect by vm.launchDirect.collectAsStateWithLifecycle()
     val godotMissing by vm.godotMissing.collectAsStateWithLifecycle()
+    val favorites by vm.favorites.collectAsStateWithLifecycle()
     val keepScreenOn by vm.keepScreenOn.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
@@ -87,10 +88,16 @@ fun TraeloApp(vm: TraeloViewModel) {
                     syncStates = syncStates,
                     checks = checks,
                     storageGranted = storageGranted,
+                    favorites = favorites,
+                    godotMissing = godotMissing,
                     snackbarHostState = snackbar,
                     onRefresh = vm::refresh,
                     onRetry = vm::retryRepos,
                     onOpenRepo = { vm.openRepo(it.ref) },
+                    onToggleFavorite = { vm.toggleFavorite(it.ref) },
+                    onPullRepo = { vm.openAndPull(it.ref) },
+                    onOpenGodot = { vm.openInGodot(it.ref) },
+                    onDismissGodotMissing = vm::dismissGodotMissing,
                     onOpenSettings = vm::openSettings,
                     onRequestPermission = requestStorage,
                 )

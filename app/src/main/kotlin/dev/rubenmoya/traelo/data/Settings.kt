@@ -27,6 +27,11 @@ class Settings(context: Context) {
             if (value == null) remove(KEY_USER_LOGIN) else putString(KEY_USER_LOGIN, value)
         }.apply()
 
+    /** Claves ([dev.rubenmoya.traelo.core.RepoRef.key]) de los repos favoritos. */
+    var favorites: Set<String>
+        get() = prefs.getStringSet(KEY_FAVORITES, null)?.toSet() ?: emptySet()
+        set(value) = prefs.edit().putStringSet(KEY_FAVORITES, value.toSet()).apply()
+
     fun resetBaseDir() {
         prefs.edit().remove(KEY_BASE_DIR).apply()
     }
@@ -36,6 +41,7 @@ class Settings(context: Context) {
         private const val KEY_BASE_DIR = "base_dir"
         private const val KEY_LAUNCH_DIRECT = "launch_direct"
         private const val KEY_USER_LOGIN = "user_login"
+        private const val KEY_FAVORITES = "favorites"
 
         @Suppress("DEPRECATION")
         fun defaultBaseDir(): String =

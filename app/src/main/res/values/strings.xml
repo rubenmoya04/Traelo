@@ -41,6 +41,12 @@
 
     <!-- Lista de repos -->
     <string name="repos_title">Mis repos</string>
+    <string name="repos_favorites">Favoritos</string>
+    <string name="repos_all">Todos</string>
+    <string name="favorite_add">Marcar como favorito</string>
+    <string name="favorite_remove">Quitar de favoritos</string>
+    <string name="repos_public_only">Solo veo repos públicos. Tu token no tiene acceso a los privados. Crea uno con "All repositories" (o uno classic con permiso repo) y ponlo en Ajustes.</string>
+    <string name="repos_public_only_button">Ir a Ajustes</string>
     <string name="search_hint">Buscar repo</string>
     <string name="search_clear">Borrar búsqueda</string>
     <string name="repos_loading">Cargando tus repos…</string>

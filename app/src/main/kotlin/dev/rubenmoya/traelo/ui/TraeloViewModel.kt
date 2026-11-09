@@ -173,6 +173,9 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
     private val _launchDirect = MutableStateFlow(settings.launchDirect)
     val launchDirect: StateFlow<Boolean> = _launchDirect.asStateFlow()
 
+    private val _favorites = MutableStateFlow(settings.favorites)
+    val favorites: StateFlow<Set<String>> = _favorites.asStateFlow()
+
     private val _godotMissing = MutableStateFlow(false)
     val godotMissing: StateFlow<Boolean> = _godotMissing.asStateFlow()
 
@@ -565,6 +568,30 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
             LaunchResult.FellBackToPlain -> _messages.tryEmit(UiText.of(R.string.msg_godot_fallback))
             LaunchResult.LaunchedPlain, LaunchResult.LaunchedWithProject -> Unit
         }
+    }
+
+    /** Abre en Godot un repo ya traido, sin entrar en su pantalla (botones de favoritos). */
+    fun openInGodot(ref: RepoRef) {
+        val dir = _syncStates.value[ref.key]?.localDir
+        val project = dir?.let { ProjectFinder.find(File(it)) }
+        when (launcher.launch(project?.dir, _launchDirect.value)) {
+            LaunchResult.NotInstalled -> _godotMissing.value = true
+            LaunchResult.Failed -> _messages.tryEmit(UiText.of(R.string.msg_godot_failed))
+            LaunchResult.FellBackToPlain -> _messages.tryEmit(UiText.of(R.string.msg_godot_fallback))
+            LaunchResult.LaunchedPlain, LaunchResult.LaunchedWithProject -> Unit
+        }
+    }
+
+    /** Abre el repo y empieza a traerlo (boton "Traer" de un favorito). */
+    fun openAndPull(ref: RepoRef) {
+        openRepo(ref)
+        pull()
+    }
+
+    fun toggleFavorite(ref: RepoRef) {
+        val next = toggled(_favorites.value, ref.key)
+        settings.favorites = next
+        _favorites.value = next
     }
 
     fun dismissGodotMissing() {
