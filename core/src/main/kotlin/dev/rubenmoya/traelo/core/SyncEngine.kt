@@ -40,6 +40,9 @@ class SyncEngine(
     private val parallelism: Int = 4,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    /** Olvida lo traido de [repo] (despues de borrar su carpeta). */
+    fun forget(repo: RepoRef) = manifests.clear(repo)
+
     /** Mira que hay nuevo sin bajar archivos. [state] es null si todavia no se trajo nada. */
     suspend fun check(repo: RepoRef, branch: String, state: SyncState?): CheckResult =
         withContext(Dispatchers.IO) {

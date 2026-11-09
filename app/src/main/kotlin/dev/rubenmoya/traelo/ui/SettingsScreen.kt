@@ -48,6 +48,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit,
     onSaveBaseDir: (String) -> Unit,
+    onPickBaseDir: () -> Unit,
     onResetBaseDir: () -> Unit,
     onRequestPermission: () -> Unit,
     onLaunchDirect: (Boolean) -> Unit,
@@ -88,7 +89,7 @@ fun SettingsScreen(
             }
 
             Section(stringResource(R.string.settings_folder)) {
-                BaseDirEditor(baseDir, onSaveBaseDir, onResetBaseDir)
+                BaseDirEditor(baseDir, onSaveBaseDir, onPickBaseDir, onResetBaseDir)
             }
 
             Section(stringResource(R.string.settings_permission)) {
@@ -143,7 +144,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun BaseDirEditor(baseDir: String, onSave: (String) -> Unit, onReset: () -> Unit) {
+private fun BaseDirEditor(baseDir: String, onSave: (String) -> Unit, onPick: () -> Unit, onReset: () -> Unit) {
     var text by remember(baseDir) { mutableStateOf(baseDir) }
     val problem = validateBaseDir(text)
     val changed = text.trim() != baseDir
@@ -165,6 +166,11 @@ private fun BaseDirEditor(baseDir: String, onSave: (String) -> Unit, onReset: ()
                     },
                 )
             },
+        )
+        BigButton(
+            text = stringResource(R.string.pick_folder),
+            onClick = onPick,
+            height = 52.dp,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             BigButton(

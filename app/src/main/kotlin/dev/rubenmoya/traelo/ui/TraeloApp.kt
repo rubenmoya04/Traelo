@@ -17,11 +17,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.rubenmoya.traelo.data.FolderPicker
 import dev.rubenmoya.traelo.data.StoragePermission
 
 private const val TOKEN_URL = "https://github.com/settings/personal-access-tokens/new"
@@ -54,6 +57,15 @@ fun TraeloApp(vm: TraeloViewModel) {
             openStorageSettings(context)
         } else {
             legacyLauncher.launch(StoragePermission.legacyPermissions)
+        }
+    }
+
+    // Selector de carpetas del sistema: sirve para la carpeta base (Ajustes) y para un repo concreto.
+    var pickingBase by remember { mutableStateOf(false) }
+    val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            val path = FolderPicker.toPath(uri)
+            if (pickingBase) vm.chooseBaseDir(path) else vm.chooseRepoParent(path)
         }
     }
 
@@ -117,6 +129,11 @@ fun TraeloApp(vm: TraeloViewModel) {
                         loadBranches = vm::loadBranches,
                         openGodot = vm::openInGodot,
                         startRestore = vm::startRestore,
+                        deleteLocal = vm::deleteLocal,
+                        pickFolder = {
+                            pickingBase = false
+                            folderLauncher.launch(null)
+                        },
                         confirmRestore = vm::confirmRestore,
                         dismissRestore = vm::dismissRestore,
                         dismissGodotMissing = vm::dismissGodotMissing,
@@ -135,6 +152,10 @@ fun TraeloApp(vm: TraeloViewModel) {
                 onBack = vm::back,
                 onLogout = vm::logout,
                 onSaveBaseDir = vm::saveBaseDir,
+                onPickBaseDir = {
+                    pickingBase = true
+                    folderLauncher.launch(null)
+                },
                 onResetBaseDir = vm::resetBaseDir,
                 onRequestPermission = requestStorage,
                 onLaunchDirect = vm::setLaunchDirect,

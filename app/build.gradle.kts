@@ -12,8 +12,8 @@ android {
         applicationId = "dev.rubenmoya.traelo"
         minSdk = 26
         targetSdk = 35
-        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 2
-        versionName = "0.2.0"
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 3
+        versionName = "0.3.0"
     }
 
     // Clave de prueba publica y compartida: asi todas las APK (CI y locales) llevan la misma firma

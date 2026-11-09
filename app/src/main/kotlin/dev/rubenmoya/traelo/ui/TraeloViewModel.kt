@@ -9,7 +9,9 @@ import dev.rubenmoya.traelo.core.CheckResult
 import dev.rubenmoya.traelo.core.FileManifestStore
 import dev.rubenmoya.traelo.core.HttpGitHubApi
 import dev.rubenmoya.traelo.core.LocalChanges
+import dev.rubenmoya.traelo.core.LocalRepoRemover
 import dev.rubenmoya.traelo.core.RemoteRepo
+import dev.rubenmoya.traelo.core.RemoveResult
 import dev.rubenmoya.traelo.core.RepoRef
 import dev.rubenmoya.traelo.core.SyncEngine
 import dev.rubenmoya.traelo.core.SyncProgress
@@ -107,6 +109,7 @@ data class DetailState(
     val project: ProjectLocation? = null,
     val projectChecked: Boolean = false,
     val findingLocal: Boolean = false,
+    val deleting: Boolean = false,
     /** Cambios locales encontrados, pendientes de confirmar la restauracion. */
     val pendingRestore: LocalChanges? = null,
     /** Carpeta donde se traera (o donde ya esta). */
@@ -483,7 +486,7 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
         detailCheckJob?.cancel()
         val branch = d.branch
         val saved = d.saved
-        val localDir = File(saved?.localDir ?: plannedDir(ref))
+        val localDir = File(saved?.localDir ?: d.localDir)
         updateDetail(ref) {
             it.copy(sync = SyncUi.Running(null), checking = false, notice = null, error = null, pendingRestore = null)
         }
@@ -547,6 +550,74 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
                 updateDetail(ref) { it.copy(findingLocal = false, error = info) }
             }
         }
+    }
+
+    // ---------------------------------------------------------------- borrar la copia del movil
+
+    /** Borra la carpeta entera del repo en el movil. En GitHub no se toca nada. */
+    fun deleteLocal() {
+        val d = _detail.value ?: return
+        val saved = d.saved ?: return
+        if (d.isRunning || d.deleting) return
+        val ref = d.repo.ref
+        detailCheckJob?.cancel()
+        updateDetail(ref) { it.copy(deleting = true, notice = null, error = null) }
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    LocalRepoRemover.remove(File(saved.localDir), File(settings.baseDir))
+                }
+                if (result == RemoveResult.Refused) {
+                    updateDetail(ref) {
+                        it.copy(deleting = false, error = ErrorInfo(UiText.of(R.string.err_delete_refused)))
+                    }
+                    return@launch
+                }
+                withContext(Dispatchers.IO) {
+                    engine.forget(ref)
+                    stateStore.remove(ref)
+                }
+                _syncStates.value = stateStore.all()
+                _checks.update { it - ref.key }
+                updateDetail(ref) {
+                    it.copy(
+                        deleting = false,
+                        saved = null,
+                        check = null,
+                        project = null,
+                        localDir = plannedDir(ref),
+                        notice = UiText.of(R.string.notice_deleted),
+                    )
+                }
+                runCheck()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateDetail(ref) {
+                    it.copy(deleting = false, error = ErrorInfo(UiText.of(R.string.err_delete_failed)))
+                }
+            }
+        }
+    }
+
+    /** Carpeta elegida con el selector para un repo que aun no se ha traido: dentro va una subcarpeta con su nombre. */
+    fun chooseRepoParent(path: String?) {
+        val d = _detail.value ?: return
+        if (d.saved != null || d.isRunning) return
+        if (path == null) {
+            _messages.tryEmit(UiText.of(R.string.msg_folder_unsupported))
+            return
+        }
+        updateDetail(d.repo.ref) { it.copy(localDir = File(normalizeBaseDir(path), d.repo.ref.name).path) }
+    }
+
+    /** Carpeta base elegida con el selector, en Ajustes. */
+    fun chooseBaseDir(path: String?) {
+        if (path == null) {
+            _messages.tryEmit(UiText.of(R.string.msg_folder_unsupported))
+            return
+        }
+        saveBaseDir(path)
     }
 
     fun confirmRestore() {

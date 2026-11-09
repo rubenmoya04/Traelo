@@ -67,6 +67,8 @@ class RepoActions(
     val loadBranches: () -> Unit,
     val openGodot: () -> Unit,
     val startRestore: () -> Unit,
+    val deleteLocal: () -> Unit,
+    val pickFolder: () -> Unit,
     val confirmRestore: () -> Unit,
     val dismissRestore: () -> Unit,
     val dismissGodotMissing: () -> Unit,
@@ -620,6 +622,35 @@ private fun AdvancedSection(detail: DetailState, actions: RepoActions) {
                     enabled = !running && detail.saved != null && !detail.findingLocal,
                     busy = detail.findingLocal,
                 )
+                if (detail.saved == null) {
+                    AdvancedAction(
+                        label = stringResource(R.string.advanced_pick_folder),
+                        help = stringResource(R.string.advanced_pick_folder_help),
+                        onClick = actions.pickFolder,
+                        enabled = !running,
+                    )
+                }
+                if (detail.saved != null) {
+                    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+                    AdvancedAction(
+                        label = stringResource(R.string.advanced_delete),
+                        help = stringResource(R.string.advanced_delete_help),
+                        onClick = { confirmDelete = true },
+                        enabled = !running && !detail.deleting,
+                        busy = detail.deleting,
+                        busyText = stringResource(R.string.advanced_delete_busy),
+                    )
+                    if (confirmDelete) {
+                        DeleteDialog(
+                            dir = detail.saved.localDir,
+                            onConfirm = {
+                                confirmDelete = false
+                                actions.deleteLocal()
+                            },
+                            onDismiss = { confirmDelete = false },
+                        )
+                    }
+                }
                 SoftCard {
                     val saved = detail.saved
                     InfoRow(stringResource(R.string.info_folder), saved?.localDir ?: detail.localDir)
@@ -640,11 +671,18 @@ private fun AdvancedSection(detail: DetailState, actions: RepoActions) {
 }
 
 @Composable
-private fun AdvancedAction(label: String, help: String, onClick: () -> Unit, enabled: Boolean, busy: Boolean = false) {
+private fun AdvancedAction(
+    label: String,
+    help: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    busy: Boolean = false,
+    busyText: String = stringResource(R.string.advanced_restore_busy),
+) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         BigButton(text = label, onClick = onClick, enabled = enabled, outlined = true, height = 52.dp)
         Text(
-            if (busy) stringResource(R.string.advanced_restore_busy) else help,
+            if (busy) busyText else help,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 8.dp),
@@ -658,6 +696,29 @@ private fun InfoRow(label: String, value: String) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyLarge)
     }
+}
+
+// ------------------------------------------------------------------ dialogo de borrar
+
+@Composable
+private fun DeleteDialog(dir: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.delete_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(stringResource(R.string.delete_body), style = MaterialTheme.typography.bodyLarge)
+                Text(dir, style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.delete_warning), style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.delete_confirm), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
 }
 
 // ------------------------------------------------------------------ dialogo de restaurar
