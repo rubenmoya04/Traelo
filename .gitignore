@@ -1,0 +1,11 @@
+build/
+.gradle/
+.kotlin/
+local.properties
+*.iml
+.idea/
+captures/
+.DS_Store
+# Claves reales: nunca al repo. La clave de prueba (app/debug.keystore) SI va, es publica.
+*.jks
+release.keystore
