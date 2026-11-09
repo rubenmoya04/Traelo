@@ -1,36 +1,62 @@
 # Tráelo
 
-App Android privada de Rubén y Silvia para traer un repo de GitHub al móvil y abrirlo en el editor de Godot para Android. Solo baja: no hay push ni commits desde el móvil.
+Trae un repo de GitHub al móvil Android y lo deja listo para abrirlo en el editor de Godot para Android.
+
+Nació de una molestia concreta: para probar un proyecto de Godot en el móvil había que entrar en la web de GitHub, descargar el zip, descomprimirlo y repetirlo en cada cambio. Tráelo hace solo lo que cambió.
+
+Solo baja. No hace push, no hace commits y no escribe nada en GitHub.
 
 ## Qué hace
 
-- Lista tus repos y dice de cada uno si estás al día o desactualizado.
-- Eliges la rama y pulsas **Traer cambios**. Solo baja lo que cambió y borra lo que ya no está en la rama.
-- **Abrir en Godot** lanza el editor (abrir directamente el proyecto es experimental).
-- En **Avanzado**: solo comprobar (fetch), traer (pull) y restaurar los archivos del móvil a como están en GitHub.
+- Lista tus repos (propios y de otros donde eres colaborador) y marca de cada uno si estás al día o hay cambios.
+- Eliges la rama y pulsas **Traer cambios**. Solo descarga los archivos que cambiaron y borra los que ya no están en la rama.
+- Favoritos arriba, con **Traer** y **Abrir en Godot** a mano.
+- **Abrir en Godot** lanza el editor. Abrir el proyecto directamente es experimental y depende de la versión del editor; si no funciona, se abre el gestor de proyectos y lo importas una vez.
+- En **Avanzado**: solo comprobar, traer, restaurar los archivos del móvil a como están en GitHub, elegir la carpeta con el navegador de archivos y borrar la copia entera del móvil.
 
-## Cómo instalarla
+## Instalación
 
-1. En el móvil, abre la Release **ultima** de este repo (pestaña Releases en GitHub) y baja `traelo.apk`.
-2. Android pedirá permiso para instalar apps de esa fuente. Dáselo.
-3. Abre Tráelo y sigue los tres pasos de bienvenida.
+1. Abre la Release [`ultima`](../../releases/tag/ultima) desde el móvil y baja `traelo.apk`.
+2. Android pedirá permiso para instalar apps desde esa fuente.
+3. Abre Tráelo, pega tu token y concede el permiso de archivos.
 
-Las siguientes versiones se instalan encima, sin desinstalar nada (llevan siempre la misma firma de prueba).
+Las versiones nuevas se instalan encima de la anterior. Cada commit en `main` publica una APK nueva en esa Release.
 
-## El token de GitHub
+## Token de GitHub
 
-Cada persona crea el suyo: GitHub, Settings, Developer settings, Fine-grained personal access tokens. Permiso **Contents: solo lectura** y elige los repos que quieras traer. Se guarda cifrado en el móvil.
+Cada persona crea el suyo. Tráelo solo necesita leer.
 
-## Cómo está hecha
+- **Repos propios:** token fine-grained con *All repositories* (o los que quieras) y el permiso **Contents: Read-only**.
+- **Repos de otra cuenta donde eres colaborador:** los fine-grained solo ven los repos de la cuenta que los crea, así que hace falta un token *classic* con el permiso `repo`.
 
-- `core/`: el motor (Kotlin sin Android, con tests). Compara la huella de cada archivo con la que se trajo la última vez.
-- `app/`: la interfaz (Jetpack Compose) y lo propio de Android.
-- Todo gratis: Kotlin, Gradle y GitHub Actions.
-- `app/debug.keystore` es una clave de prueba pública. Vale para instalar en vuestros móviles, no para publicar en Play Store.
+El token se guarda cifrado con el Keystore de Android y solo se envía a `api.github.com`.
 
-## Comandos
+## Permisos
+
+- **Acceso a todos los archivos:** el editor de Godot tiene que leer la carpeta donde Tráelo deja el proyecto, así que no vale el almacenamiento privado de la app.
+- **Internet:** para hablar con la API de GitHub.
+
+## Cómo funciona
+
+Compara el árbol del repo en GitHub con lo que se trajo la última vez, usando el hash de cada archivo (el mismo SHA-1 de blob que usa git). Descarga en paralelo solo lo distinto, verifica cada archivo antes de guardarlo y lo escribe de forma atómica. Para la primera descarga de un repo grande usa el zip de GitHub. La lista de archivos traídos se guarda fuera de la carpeta del proyecto, para que Godot no la vea, y nunca se toca `.godot`.
+
+## Estructura
+
+- `core/`: el motor, en Kotlin sin dependencias de Android y con tests.
+- `app/`: interfaz (Jetpack Compose, Material 3) y lo propio de Android: lanzar Godot, permisos, cifrado del token.
+
+## Compilar
+
+Hace falta JDK 17 y el SDK de Android (plataforma 35).
 
 ```bash
-./gradlew :core:test        # tests del motor
-./gradlew :app:assembleDebug  # genera app/build/outputs/apk/debug/app-debug.apk
+./gradlew :core:test           # tests del motor
+./gradlew :app:testDebugUnitTest
+./gradlew :app:assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
 ```
+
+## Limitaciones
+
+- Solo se ha probado con repos de Godot en un par de móviles Android.
+- La firma de `app/debug.keystore` es pública a propósito, para que las APK de CI se instalen unas encima de otras. Instala solo las APK de la Release de este repo, y no uses esta firma para publicar en Play Store.
+- No gestiona submódulos ni Git LFS: los punteros de LFS se bajan como texto.
