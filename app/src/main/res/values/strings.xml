@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tráelo</string>
+
+    <!-- Generales -->
+    <string name="back">Volver</string>
+    <string name="ok">Vale</string>
+    <string name="cancel">Cancelar</string>
+    <string name="save">Guardar</string>
+    <string name="retry">Reintentar</string>
+    <string name="go_to_settings">Ir a Ajustes</string>
+    <string name="expand">Desplegar</string>
+    <string name="collapse">Plegar</string>
+
+    <!-- Bienvenida -->
+    <string name="welcome_title">Tráelo</string>
+    <string name="welcome_subtitle">Trae tus repos de GitHub al móvil para abrirlos en el editor de Godot. Solo baja archivos, nunca sube nada.</string>
+    <string name="step1_title">Tu token de GitHub</string>
+    <string name="step2_title">Permiso de archivos</string>
+    <string name="step3_title">Listo</string>
+    <string name="howto_intro">Necesitas un token para que Tráelo pueda leer tus repos. Se crea en un minuto:</string>
+    <string name="howto_1">Entra en GitHub, abre tu foto, Ajustes (Settings) y baja hasta Developer settings.</string>
+    <string name="howto_2">Entra en Personal access tokens, Fine-grained tokens y pulsa Generate new token.</string>
+    <string name="howto_3">En Repository access elige solo los repos que quieras traer.</string>
+    <string name="howto_4">En Repository permissions pon Contents en Read-only (solo lectura). No hace falta nada más.</string>
+    <string name="howto_5">Genera el token, cópialo (empieza por github_pat_) y pégalo aquí abajo. GitHub solo te lo enseña una vez.</string>
+    <string name="open_github">Abrir GitHub para crearlo</string>
+    <string name="token_label">Pega aquí tu token</string>
+    <string name="token_show">Ver</string>
+    <string name="token_hide">Ocultar</string>
+    <string name="token_validate">Validar token</string>
+    <string name="token_validating">Comprobando…</string>
+    <string name="welcome_hello">Hola, %1$s</string>
+    <string name="welcome_token_saved">Token guardado</string>
+    <string name="permission_why">Tráelo guarda los proyectos en una carpeta normal del móvil (Documentos/Traelo) para que el editor de Godot pueda abrirlos. Para eso Android pide permiso de acceso a los archivos. Te lo preguntará, o te llevará a una pantalla de ajustes donde tienes que activar el interruptor de Tráelo y volver.</string>
+    <string name="permission_button">Dar permiso de archivos</string>
+    <string name="permission_skip">Más tarde</string>
+    <string name="permission_granted">Permiso de archivos concedido</string>
+    <string name="step3_body">Ya puedes traer tus repos al móvil y abrirlos en Godot.</string>
+    <string name="step3_button">Ir a mis repos</string>
+
+    <!-- Lista de repos -->
+    <string name="repos_title">Mis repos</string>
+    <string name="search_hint">Buscar repo</string>
+    <string name="search_clear">Borrar búsqueda</string>
+    <string name="repos_loading">Cargando tus repos…</string>
+    <string name="repos_empty_title">No veo ningún repo</string>
+    <string name="repos_empty_body">Tu token solo ve los repos que elegiste al crearlo. Edítalo en GitHub para añadir repos y desliza hacia abajo para recargar.</string>
+    <string name="repos_no_results_title">Sin resultados</string>
+    <string name="repos_no_results_body">Ningún repo se llama como «%1$s».</string>
+    <string name="repos_offline_title">Sin conexión</string>
+    <string name="repos_error_title">No se pudo cargar</string>
+    <string name="repos_refresh_failed">No se pudo actualizar la lista. %1$s</string>
+    <string name="repo_private">Repo privado</string>
+    <string name="repo_owner_pushed">%1$s · último push %2$s</string>
+    <string name="permission_banner">Falta el permiso de archivos. Sin él no se puede traer nada.</string>
+    <string name="permission_banner_button">Dar permiso</string>
+
+    <!-- Estados -->
+    <string name="status_not_synced">Sin traer</string>
+    <string name="status_synced_unchecked">Traído</string>
+    <string name="status_checking">Comprobando</string>
+    <string name="status_up_to_date">Al día</string>
+    <string name="status_error">Error</string>
+    <string name="status_outdated_headline">Desactualizado</string>
+    <plurals name="status_outdated">
+        <item quantity="one">Desactualizado, %d cambio</item>
+        <item quantity="other">Desactualizado, %d cambios</item>
+    </plurals>
+    <string name="status_body_up_to_date">Lo que tienes en el móvil es lo último de la rama %1$s.</string>
+    <string name="status_body_checking">Mirando qué hay de nuevo en GitHub.</string>
+    <string name="status_body_not_synced">Todavía no has traído este repo al móvil.</string>
+    <plurals name="status_body_not_synced_files">
+        <item quantity="one">Todavía no lo has traído. La rama %1$s tiene %2$d archivo.</item>
+        <item quantity="other">Todavía no lo has traído. La rama %1$s tiene %2$d archivos.</item>
+    </plurals>
+    <string name="status_body_unchecked">Ya lo tienes en el móvil. Falta comprobar si hay cambios.</string>
+    <plurals name="counts_added">
+        <item quantity="one">%d archivo nuevo</item>
+        <item quantity="other">%d archivos nuevos</item>
+    </plurals>
+    <plurals name="counts_modified">
+        <item quantity="one">%d cambiado</item>
+        <item quantity="other">%d cambiados</item>
+    </plurals>
+    <plurals name="counts_removed">
+        <item quantity="one">%d borrado</item>
+        <item quantity="other">%d borrados</item>
+    </plurals>
+    <string name="counts_none">Hay una versión nueva, pero ningún archivo cambia.</string>
+
+    <!-- Pantalla de un repo -->
+    <string name="branch_label">Rama</string>
+    <string name="branch_change">Cambiar de rama</string>
+    <string name="branch_sheet_title">Elige una rama</string>
+    <string name="branch_none">No he encontrado ramas.</string>
+    <string name="branch_tag_default">por defecto</string>
+    <string name="branch_tag_synced">la que tienes en el móvil</string>
+    <string name="branch_selected">Elegida</string>
+    <string name="action_pull_first">Traer proyecto</string>
+    <string name="action_pull">Traer cambios</string>
+    <string name="action_pull_branch">Cambiar a %1$s y traer</string>
+    <string name="action_open_godot">Abrir en Godot</string>
+    <string name="action_cancel">Cancelar descarga</string>
+    <string name="project_not_found">No encuentro ningún project.godot en este repo (miré hasta 3 carpetas de profundidad). Godot se abrirá sin proyecto.</string>
+    <string name="project_multiple">Hay %1$d proyectos de Godot en este repo. Abro el menos profundo: %2$s</string>
+    <string name="project_in_subfolder">El proyecto de Godot está en la subcarpeta %1$s.</string>
+    <string name="project_root">la raíz</string>
+    <string name="msg_godot_failed">No he podido abrir el editor de Godot.</string>
+    <string name="msg_godot_fallback">Godot no aceptó abrir el proyecto directamente. He abierto el editor normal: elige el proyecto a mano.</string>
+    <string name="godot_missing_title">Falta el editor de Godot</string>
+    <string name="godot_missing_body">No encuentro el editor de Godot para Android en este móvil. Instálalo (es gratis, lo tienes en godotengine.org) y vuelve a pulsar Abrir en Godot.</string>
+
+    <!-- Progreso y resultado -->
+    <string name="progress_preparing">Preparando…</string>
+    <string name="progress_zip">Bajando el proyecto</string>
+    <string name="progress_extracting">Colocando %1$d de %2$d archivos</string>
+    <string name="progress_extracting_unknown">Colocando archivos</string>
+    <plurals name="progress_files">
+        <item quantity="one">Bajando %1$d de %2$d archivo</item>
+        <item quantity="other">Bajando %1$d de %2$d archivos</item>
+    </plurals>
+    <string name="progress_removing">Borrando lo que ya no está en GitHub</string>
+    <string name="progress_saving">Guardando</string>
+    <string name="progress_keep_open">Deja la app abierta hasta que termine. La pantalla se queda encendida.</string>
+    <string name="notice_cancelled">Descarga cancelada. Puedes volver a traer cuando quieras.</string>
+    <string name="notice_nothing_new">Ya estaba todo al día, no hizo falta bajar nada.</string>
+    <string name="notice_nothing_to_restore">Todo coincide con GitHub, no hay nada que restaurar.</string>
+    <plurals name="notice_downloaded">
+        <item quantity="one">Listo: %d archivo bajado.</item>
+        <item quantity="other">Listo: %d archivos bajados.</item>
+    </plurals>
+    <plurals name="notice_removed">
+        <item quantity="one">%d borrado.</item>
+        <item quantity="other">%d borrados.</item>
+    </plurals>
+    <plurals name="notice_skipped">
+        <item quantity="one">%d no se trae (enlace simbólico o submódulo).</item>
+        <item quantity="other">%d no se traen (enlaces simbólicos o submódulos).</item>
+    </plurals>
+    <string name="leave_title">¿Cancelar la descarga?</string>
+    <string name="leave_body">Si sales ahora, la descarga se corta. Puedes volver a traer cuando quieras.</string>
+    <string name="leave_confirm">Cancelar y salir</string>
+    <string name="leave_stay">Seguir bajando</string>
+
+    <!-- Que ha cambiado -->
+    <string name="changes_title">Qué ha cambiado</string>
+    <string name="changes_unknown">No se puede comparar con lo que tienes en el móvil.</string>
+    <string name="changes_none">No hay commits nuevos que enseñar.</string>
+    <string name="commit_meta">%1$s · %2$s</string>
+    <plurals name="changes_more">
+        <item quantity="one">y %d más</item>
+        <item quantity="other">y %d más</item>
+    </plurals>
+
+    <!-- Avanzado -->
+    <string name="advanced_title">Avanzado</string>
+    <string name="advanced_check">Solo comprobar</string>
+    <string name="advanced_check_help">Mira si hay cambios sin bajar nada.</string>
+    <string name="advanced_pull">Traer</string>
+    <string name="advanced_pull_help">Baja lo nuevo de la rama elegida.</string>
+    <string name="advanced_restore">Restaurar archivos del móvil</string>
+    <string name="advanced_restore_help">Busca archivos del móvil que no coincidan con GitHub y los repone. Antes te dice cuántos son.</string>
+    <string name="advanced_restore_busy">Mirando los archivos del móvil…</string>
+    <string name="info_folder">Carpeta local</string>
+    <string name="info_last_commit">Último commit</string>
+    <string name="info_last_time">Última vez que se trajo</string>
+    <string name="info_none">Ninguno</string>
+    <string name="info_never">Nunca</string>
+    <plurals name="restore_title">
+        <item quantity="one">%d archivo no coincide</item>
+        <item quantity="other">%d archivos no coinciden</item>
+    </plurals>
+    <string name="restore_body">%1$d cambiados en el móvil y %2$d que faltan.</string>
+    <string name="restore_warning">Si sigues, se vuelven a bajar desde GitHub y se pierde lo que hayas cambiado en ellos.</string>
+    <string name="restore_confirm">Restaurar</string>
+
+    <!-- Ajustes -->
+    <string name="settings_title">Ajustes</string>
+    <string name="settings_account">Cuenta</string>
+    <string name="settings_logged_as">Conectado como %1$s</string>
+    <string name="settings_logged_unknown">Token guardado</string>
+    <string name="settings_logout">Cerrar sesión o cambiar token</string>
+    <string name="logout_title">¿Cerrar sesión?</string>
+    <string name="logout_body">Se borra el token de este móvil. Los proyectos que ya has traído se quedan donde están.</string>
+    <string name="logout_confirm">Cerrar sesión</string>
+    <string name="settings_folder">Carpeta de los proyectos</string>
+    <string name="settings_folder_label">Carpeta base</string>
+    <string name="settings_folder_help">Cada repo se guarda en una subcarpeta. Los que ya has traído no se mueven.</string>
+    <string name="settings_folder_reset">Poner la de siempre</string>
+    <string name="folder_error_empty">Escribe una ruta.</string>
+    <string name="folder_error_not_absolute">Tiene que empezar por /, por ejemplo /storage/emulated/0/Documents/Traelo</string>
+    <string name="folder_error_dotdot">No uses «..» en la ruta.</string>
+    <string name="settings_permission">Permiso de archivos</string>
+    <string name="settings_permission_missing">Sin permiso: no se puede guardar nada en el móvil.</string>
+    <string name="settings_godot">Godot</string>
+    <string name="settings_launch_direct">Abrir el proyecto directamente en Godot (experimental)</string>
+    <string name="settings_launch_direct_help">Intenta que el editor abra el proyecto a la primera. Si tu versión del editor no lo respeta, se abre normal y eliges el proyecto a mano.</string>
+    <string name="settings_version">Versión %1$s</string>
+
+    <!-- Errores (qué pasó y qué hacer) -->
+    <string name="err_unauthorized">Tu token ya no vale o ha caducado. Ve a Ajustes y pega uno nuevo.</string>
+    <string name="err_token_rejected">GitHub no acepta este token. Comprueba que lo has copiado entero y que no ha caducado.</string>
+    <string name="err_token_store">No he podido guardar el token de forma segura en este móvil. Prueba otra vez.</string>
+    <string name="err_not_found">No encuentro este repo en GitHub, o tu token no tiene permiso para verlo. Mira en GitHub que el token incluya este repo.</string>
+    <string name="err_rate_limited">GitHub ha puesto un límite de peticiones. Espera un rato y vuelve a probar.</string>
+    <string name="err_rate_limited_at">GitHub ha puesto un límite de peticiones. Se reinicia a las %1$s, vuelve a probar entonces.</string>
+    <string name="err_network">Sin conexión con GitHub. Mira tu Wi-Fi o tus datos y vuelve a probar.</string>
+    <string name="err_http">GitHub ha tenido un problema (código %1$d). Prueba otra vez en un rato.</string>
+    <string name="err_integrity">Un archivo llegó dañado. Vuelve a intentarlo.</string>
+    <string name="err_too_big">Este repo es demasiado grande para traerlo archivo a archivo.</string>
+    <string name="err_io">No he podido escribir en la carpeta del móvil. Mira que el permiso de archivos esté dado y que quede espacio.</string>
+    <string name="err_unknown">Algo ha fallado y no sé qué ha sido. Vuelve a intentarlo.</string>
+    <string name="err_no_permission">Falta el permiso de archivos. Sin él no puedo guardar el proyecto en el móvil.</string>
+</resources>
