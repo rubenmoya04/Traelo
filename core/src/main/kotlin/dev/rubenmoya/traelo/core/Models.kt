@@ -75,6 +75,8 @@ data class PullResult(
     val removed: Int,
     /** Rutas que no se traen (enlaces simbolicos, submodulos). */
     val skipped: List<String>,
+    /** Archivos de la rama que no se bajan por el `.traeloignore` del repo. */
+    val ignored: Int = 0,
 )
 
 enum class SyncPhase { CHECKING, DOWNLOADING_ZIP, EXTRACTING, DOWNLOADING_FILES, REMOVING, SAVING }

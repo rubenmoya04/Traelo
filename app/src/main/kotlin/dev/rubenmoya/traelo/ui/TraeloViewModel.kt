@@ -506,7 +506,7 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
                         branch = result.newState.branch,
                         check = CheckResult.UpToDate(result.newState.headSha),
                         sync = SyncUi.Idle,
-                        notice = pulledNotice(result.downloaded, result.removed, result.skipped.size),
+                        notice = pulledNotice(result.downloaded, result.removed, result.skipped.size, result.ignored),
                         localDir = result.newState.localDir,
                     )
                 }
@@ -675,12 +675,13 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
     private fun fixAction(info: ErrorInfo): ErrorInfo =
         if (info.action == ErrorAction.GRANT_PERMISSION && _storageGranted.value) info.copy(action = null) else info
 
-    private fun pulledNotice(downloaded: Int, removed: Int, skipped: Int): UiText {
+    private fun pulledNotice(downloaded: Int, removed: Int, skipped: Int, ignored: Int): UiText {
         if (downloaded == 0 && removed == 0) return UiText.of(R.string.notice_nothing_new)
         val parts = ArrayList<UiText>()
         parts += UiText.plural(R.plurals.notice_downloaded, downloaded)
         if (removed > 0) parts += UiText.plural(R.plurals.notice_removed, removed)
         if (skipped > 0) parts += UiText.plural(R.plurals.notice_skipped, skipped)
+        if (ignored > 0) parts += UiText.plural(R.plurals.notice_ignored, ignored)
         return UiText.Joined(parts)
     }
 }

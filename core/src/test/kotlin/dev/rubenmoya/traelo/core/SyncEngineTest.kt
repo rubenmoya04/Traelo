@@ -180,6 +180,61 @@ class SyncEngineTest {
         assertEquals(base.keys, manifests.load(repo).keys)
     }
 
+    @Test fun aBigBatchOfChangesLaterAlsoUsesTheZipAndOnlyWritesWhatChanged() = runBlocking {
+        val state = firstPull(engine(zipThreshold = 5)).newState
+        File(dir, "README.md").writeText("editado en el movil\n")
+        val more = base + (1..6).associate { "assets/sfx/s$it.wav" to "sonido $it\n" } +
+            ("game/scripts/a.gd" to "extends Node2D\n")
+        api.commit("main", more)
+        api.blobDownloads.clear()
+        val result = engine(zipThreshold = 5).pull(repo, "main", dir, state)
+        assertEquals(1, api.zipDownloads)
+        assertTrue(api.blobDownloads.isEmpty())
+        assertEquals(7, result.downloaded)
+        assertEquals("sonido 3\n", read("assets/sfx/s3.wav"))
+        assertEquals("extends Node2D\n", read("game/scripts/a.gd"))
+        assertEquals("editado en el movil\n", read("README.md"), "lo que no cambio en GitHub no se pisa")
+        assertEquals(more.keys, manifests.load(repo).keys)
+    }
+
+    @Test fun aSmallBatchOfChangesStillGoesFileByFile() = runBlocking {
+        val state = firstPull(engine(zipThreshold = 5)).newState
+        api.commit("main", base + ("game/scripts/a.gd" to "extends Node2D\n"))
+        api.blobDownloads.clear()
+        engine(zipThreshold = 5).pull(repo, "main", dir, state)
+        assertEquals(0, api.zipDownloads)
+        assertEquals(1, api.blobDownloads.size)
+    }
+
+    @Test fun ignoredPathsAreNotDownloadedNorDeleted() = runBlocking {
+        val withTests = base + ("tests/test_a.gd" to "# test\n")
+        api.commit("main", withTests)
+        val state = engine().pull(repo, "main", dir, null).newState
+        api.commit(
+            "main",
+            withTests + (".traeloignore" to "# solo para jugar\ntests/\n*.md\n") + ("tests/test_b.gd" to "# b\n"),
+        )
+        val check = engine().check(repo, "main", state)
+        assertIs<CheckResult.Outdated>(check)
+        assertEquals(1, check.counts.added, "solo el propio .traeloignore es nuevo")
+        val result = engine().pull(repo, "main", dir, state)
+        assertEquals(3, result.ignored)
+        assertTrue(File(dir, "tests/test_a.gd").isFile, "lo ignorado que ya estaba no se borra")
+        assertTrue(File(dir, "README.md").isFile)
+        assertFalse(File(dir, "tests/test_b.gd").exists(), "lo ignorado nuevo no se baja")
+        val tracked = manifests.load(repo).keys
+        assertFalse("tests/test_a.gd" in tracked)
+        assertFalse("README.md" in tracked)
+        assertTrue(".traeloignore" in tracked)
+    }
+
+    @Test fun ignoredFilesDoNotCountForTheFirstSync() = runBlocking {
+        api.commit("main", base + (".traeloignore" to "game/\n"))
+        val check = engine().check(repo, "main", null)
+        assertIs<CheckResult.NeverSynced>(check)
+        assertEquals(2, check.files)
+    }
+
     @Test fun zipFilesThatDifferFromTheTreeAreFetchedOneByOne() = runBlocking {
         api.commit("main", base)
         api.zipOverrides = mapOf("README.md" to "hola\r\n".toByteArray())

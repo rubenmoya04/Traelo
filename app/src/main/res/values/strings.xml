@@ -140,6 +140,10 @@
         <item quantity="one">%d borrado.</item>
         <item quantity="other">%d borrados.</item>
     </plurals>
+    <plurals name="notice_ignored">
+        <item quantity="one">%d ignorado por el .traeloignore del repo.</item>
+        <item quantity="other">%d ignorados por el .traeloignore del repo.</item>
+    </plurals>
     <plurals name="notice_skipped">
         <item quantity="one">%d no se trae (enlace simbólico o submódulo).</item>
         <item quantity="other">%d no se traen (enlaces simbólicos o submódulos).</item>

@@ -38,7 +38,25 @@ El token se guarda cifrado con el Keystore de Android y solo se envía a `api.gi
 
 ## Cómo funciona
 
-Compara el árbol del repo en GitHub con lo que se trajo la última vez, usando el hash de cada archivo (el mismo SHA-1 de blob que usa git). Descarga en paralelo solo lo distinto, verifica cada archivo antes de guardarlo y lo escribe de forma atómica. Para la primera descarga de un repo grande usa el zip de GitHub. La lista de archivos traídos se guarda fuera de la carpeta del proyecto, para que Godot no la vea, y nunca se toca `.godot`.
+Compara el árbol del repo en GitHub con lo que se trajo la última vez, usando el hash de cada archivo (el mismo SHA-1 de blob que usa git). Descarga en paralelo solo lo distinto, verifica cada archivo antes de guardarlo y lo escribe de forma atómica. Si hay muchos archivos que bajar (la primera vez o una tanda grande de cambios) usa el zip de GitHub, una sola descarga, y saca de él solo lo que hace falta. La lista de archivos traídos se guarda fuera de la carpeta del proyecto, para que Godot no la vea, y nunca se toca `.godot`.
+
+### Ignorar carpetas: `.traeloignore`
+
+Si el repo tiene un archivo `.traeloignore` en la raíz, Traelo no baja lo que diga, por ejemplo los tests o las herramientas que no hacen falta para jugar. Una regla por línea; `#` para comentarios:
+
+```
+# solo para jugar en el movil
+tests/
+tools/
+docs/
+*.md
+```
+
+- `carpeta/` ignora esa carpeta entera desde la raíz.
+- `*.md` ignora por nombre en cualquier carpeta.
+- Un asterisco vale cualquier nombre dentro de una carpeta y dos seguidos, cualquier profundidad.
+
+Lo ignorado que ya estaba en el móvil no se borra: solo deja de actualizarse.
 
 ## Estructura
 

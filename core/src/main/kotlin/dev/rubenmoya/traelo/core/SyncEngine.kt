@@ -1,5 +1,6 @@
 package dev.rubenmoya.traelo.core
 
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -30,6 +31,9 @@ import kotlinx.coroutines.withContext
  * - Cada archivo se baja a un temporal, se comprueba su huella y solo entonces sustituye al viejo.
  * - Las rutas se validan antes de escribir (nada fuera de la carpeta, nada de `..`).
  * - El manifiesto refleja lo que de verdad hay en disco, tambien si la descarga se corta a medias.
+ * - Lo que el `.traeloignore` del repo ignora no se baja ni se gestiona, pero tampoco se borra.
+ * - Si hay muchos archivos que bajar (primera vez o una tanda grande de cambios) se baja un solo zip
+ *   y se sacan de el solo los archivos que hacen falta.
  *
  * [onProgress] se llama desde varios hilos: tiene que aguantarlo.
  */
@@ -37,7 +41,7 @@ class SyncEngine(
     private val api: GitHubApi,
     private val manifests: ManifestStore,
     private val zipThreshold: Int = 60,
-    private val parallelism: Int = 4,
+    private val parallelism: Int = 8,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     /** Olvida lo traido de [repo] (despues de borrar su carpeta). */
@@ -48,13 +52,13 @@ class SyncEngine(
         withContext(Dispatchers.IO) {
             val head = api.branchHead(repo, branch)
             if (state == null) {
-                return@withContext CheckResult.NeverSynced(head, loadTree(repo, head).entries.size)
+                return@withContext CheckResult.NeverSynced(head, remoteView(repo, head).entries.size)
             }
             if (state.branch == branch && state.headSha == head) {
                 return@withContext CheckResult.UpToDate(head)
             }
-            val tree = loadTree(repo, head)
-            val plan = SyncPlanner.plan(tree.entries, manifests.load(repo), state.localFile(), verifyAll = false)
+            val view = remoteView(repo, head)
+            val plan = SyncPlanner.plan(view.entries, view.managed(manifests.load(repo)), state.localFile(), verifyAll = false)
             val commits = try {
                 api.commitsBetween(repo, state.headSha, head)
             } catch (e: GitHubException.NotFound) {
@@ -80,32 +84,34 @@ class SyncEngine(
         withContext(Dispatchers.IO) {
             onProgress(SyncProgress(SyncPhase.CHECKING, 0, 0))
             val head = api.branchHead(repo, branch)
-            val tree = loadTree(repo, head)
+            val view = remoteView(repo, head)
             if (!localDir.isDirectory && !localDir.mkdirs()) {
                 throw IOException("No se puede crear la carpeta ${localDir.path}")
             }
-            val manifest = LinkedHashMap(manifests.load(repo))
-            var plan = SyncPlanner.plan(tree.entries, manifest, localDir, verifyLocal)
+            val manifest = LinkedHashMap(view.managed(manifests.load(repo)))
+            var plan = SyncPlanner.plan(view.entries, manifest, localDir, verifyLocal)
             val fromZip = HashSet<String>()
             val applied = ConcurrentHashMap<String, String>()
             val removedPaths = ConcurrentHashMap.newKeySet<String>()
             try {
-                if (manifest.isEmpty() && plan.download.size >= zipThreshold) {
-                    fromZip += fetchZip(repo, head, localDir, tree.entries, onProgress)
-                    plan = SyncPlanner.plan(tree.entries, manifest, localDir, verifyLocal)
+                if (plan.download.size >= zipThreshold) {
+                    val wanted = plan.download.mapTo(HashSet()) { it.entry.path }
+                    fromZip += fetchZip(repo, head, localDir, wanted, onProgress)
+                    plan = SyncPlanner.plan(view.entries, manifest, localDir, verifyLocal)
                 }
                 removeFiles(plan, localDir, removedPaths, onProgress)
                 downloadFiles(repo, plan, localDir, applied, onProgress)
                 onProgress(SyncProgress(SyncPhase.SAVING, 0, 0))
                 val unsafe = plan.unsafe.toSet()
                 val finalManifest = LinkedHashMap<String, String>()
-                for (entry in tree.entries) if (entry.path !in unsafe) finalManifest[entry.path] = entry.sha
+                for (entry in view.entries) if (entry.path !in unsafe) finalManifest[entry.path] = entry.sha
                 manifests.save(repo, finalManifest)
                 PullResult(
                     newState = SyncState(repo, branch, head, clock(), localDir.absolutePath),
                     downloaded = (fromZip + plan.download.map { it.entry.path }).size,
                     removed = plan.remove.size,
-                    skipped = tree.skipped + plan.unsafe,
+                    skipped = view.skipped + plan.unsafe,
+                    ignored = view.ignored,
                 )
             } catch (e: Throwable) {
                 withContext(NonCancellable) {
@@ -136,6 +142,29 @@ class SyncEngine(
         val tree = api.tree(repo, head)
         if (tree.truncated) throw GitHubException.TooBig()
         return tree
+    }
+
+    /** La rama tal como la gestiona Traelo: el arbol menos lo que ignora el `.traeloignore`. */
+    private class RemoteView(val entries: List<TreeEntry>, val skipped: List<String>, val rules: IgnoreRules, val ignored: Int) {
+        /** El manifiesto sin lo ignorado: eso deja de gestionarse, y por tanto nunca se borra. */
+        fun managed(manifest: Map<String, String>): Map<String, String> =
+            if (rules.isEmpty) manifest else manifest.filterKeys { !rules.ignores(it) }
+    }
+
+    private fun remoteView(repo: RepoRef, head: String): RemoteView {
+        val tree = loadTree(repo, head)
+        val rules = loadIgnoreRules(repo, tree.entries)
+        if (rules.isEmpty) return RemoteView(tree.entries, tree.skipped, rules, 0)
+        val kept = tree.entries.filter { !rules.ignores(it.path) }
+        return RemoteView(kept, tree.skipped, rules, tree.entries.size - kept.size)
+    }
+
+    private fun loadIgnoreRules(repo: RepoRef, entries: List<TreeEntry>): IgnoreRules {
+        val entry = entries.firstOrNull { it.path == IgnoreRules.FILE_NAME } ?: return IgnoreRules.NONE
+        if (entry.size > MAX_IGNORE_BYTES) return IgnoreRules.NONE
+        val out = ByteArrayOutputStream()
+        api.downloadBlob(repo, entry.sha, out)
+        return IgnoreRules.parse(out.toString(Charsets.UTF_8.name()))
     }
 
     private fun savePartial(
@@ -241,18 +270,17 @@ class SyncEngine(
     }
 
     /**
-     * Primera vez con muchos archivos: un solo zip en vez de una peticion por archivo. Solo se
-     * escribe lo que esta en el arbol de la rama y con ruta segura. Despues el planificador
-     * compara huellas y lo que no coincida (saltos de linea, export-ignore) se baja uno a uno.
+     * Muchos archivos que bajar: un solo zip en vez de una peticion por archivo. Solo se escribe lo
+     * de [allowed] (lo que el plan necesita) y con ruta segura. Despues el planificador compara
+     * huellas y lo que no coincida (saltos de linea, export-ignore) se baja uno a uno.
      */
     private fun fetchZip(
         repo: RepoRef,
         head: String,
         localDir: File,
-        entries: List<TreeEntry>,
+        allowed: Set<String>,
         onProgress: (SyncProgress) -> Unit,
     ): Set<String> {
-        val allowed = entries.mapTo(HashSet()) { it.path }
         val written = HashSet<String>()
         val zipFile = File.createTempFile("traelo", ".zip")
         try {
@@ -269,7 +297,9 @@ class SyncEngine(
                             writeFromStream(zip, target)
                             written += relative
                         }
-                        onProgress(SyncProgress(SyncPhase.EXTRACTING, ++done, allowed.size, relative))
+                        if (target != null) {
+                            onProgress(SyncProgress(SyncPhase.EXTRACTING, ++done, allowed.size, relative))
+                        }
                     }
                     zip.closeEntry()
                     item = zip.nextEntry
@@ -289,5 +319,10 @@ class SyncEngine(
         } finally {
             temp.delete()
         }
+    }
+
+    private companion object {
+        /** Un `.traeloignore` mas grande que esto no es un archivo de reglas: se ignora. */
+        const val MAX_IGNORE_BYTES = 64 * 1024L
     }
 }
