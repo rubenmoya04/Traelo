@@ -1,0 +1,63 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sin raya larga en el repo
+        run: |
+          if grep -rIl --exclude-dir=.git --exclude-dir=build --exclude-dir=.gradle "$(printf '\xe2\x80\x94')" . ; then
+            echo "Hay una raya larga (em dash) en los archivos de arriba. Quitala." ; exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Tests del motor
+        run: ./gradlew :core:test --console=plain
+
+      - name: Compilar APK
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: ./gradlew :app:assembleDebug --console=plain
+
+      - name: Preparar archivo
+        run: cp app/build/outputs/apk/debug/app-debug.apk traelo.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: traelo-apk
+          path: traelo.apk
+
+      - name: Publicar en la Release "ultima"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ultima --cleanup-tag --yes || true
+          gh release create ultima traelo.apk --prerelease \
+            --title "Traelo (ultima version)" \
+            --notes "APK de prueba compilada del commit ${GITHUB_SHA::7}. Se reemplaza en cada cambio."
