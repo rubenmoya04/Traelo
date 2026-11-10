@@ -1,6 +1,6 @@
 package dev.rubenmoya.traelo.core
 
-import java.io.File
+import java.io.InputStream
 import java.io.OutputStream
 
 /** Errores de GitHub ya traducidos a cosas que se le pueden explicar a la persona. */
@@ -32,15 +32,19 @@ interface GitHubApi {
 
     fun listBranches(repo: RepoRef): List<Branch>
 
+    /** Commit de la punta de la rama. Conviene que sea barato: se pide en cada comprobacion. */
     fun branchHead(repo: RepoRef, branch: String): String
 
     fun tree(repo: RepoRef, sha: String): TreeResult
 
-    /** Escribe el contenido tal cual (sin base64) en [out]. */
+    /** Escribe el contenido tal cual (sin base64) en [out], a trozos. */
     fun downloadBlob(repo: RepoRef, sha: String, out: OutputStream)
 
-    /** Baja el zip de la rama a [dest]. */
-    fun downloadZip(repo: RepoRef, ref: String, dest: File)
+    /**
+     * Abre el zip de [ref] y se lo pasa a [read] mientras llega, sin guardarlo entero. El flujo se
+     * cierra al volver de [read].
+     */
+    fun <T> openZip(repo: RepoRef, ref: String, read: (InputStream) -> T): T
 
     /** Commits entre [base] y [head], mas reciente primero, o null si GitHub no puede compararlos. */
     fun commitsBetween(repo: RepoRef, base: String, head: String): List<CommitInfo>?

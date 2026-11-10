@@ -15,6 +15,8 @@ kotlin {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    // Cliente HTTP con keep-alive, HTTP/2 y gzip. Gratis (Apache 2.0) y sin dependencias de Android.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // En Android org.json ya viene en el sistema; aqui solo se compila contra el y se usa en los tests.
     compileOnly("org.json:json:20240303")
     testImplementation("org.json:json:20240303")

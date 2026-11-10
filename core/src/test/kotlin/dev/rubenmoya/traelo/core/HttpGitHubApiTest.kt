@@ -23,7 +23,8 @@ class HttpGitHubApiTest {
     @get:Rule val tmp = TemporaryFolder()
 
     private lateinit var server: HttpServer
-    private val seen = ArrayList<Map<String, String?>>() // path, authorization, accept, agent
+    private val seen = ArrayList<Map<String, String?>>() // path, authorization, accept, agent, etag
+    private val ports = HashSet<Int>() // puerto de origen de cada peticion: uno solo = conexion reutilizada
     private var handler: (HttpExchange) -> Unit = { reply(it, 404, "{}") }
     private val base get() = "http://127.0.0.1:${server.address.port}"
     private val secret = "ghp_SECRETO_NO_DEBE_SALIR"
@@ -38,7 +39,9 @@ class HttpGitHubApiTest {
                 "auth" to ex.requestHeaders.getFirst("Authorization"),
                 "accept" to ex.requestHeaders.getFirst("Accept"),
                 "agent" to ex.requestHeaders.getFirst("User-Agent"),
+                "etag" to ex.requestHeaders.getFirst("If-None-Match"),
             )
+            ports += ex.remoteAddress.port
             handler(ex)
         }
         server.start()
@@ -174,11 +177,46 @@ class HttpGitHubApiTest {
                 reply(ex, 200, zipBytes)
             }
         }
-        val dest = File(tmp.root, "x.zip")
-        api().downloadZip(repo, "abc", dest)
-        assertTrue(zipBytes.contentEquals(dest.readBytes()))
+        val received = api().openZip(repo, "abc") { it.readBytes() }
+        assertTrue(zipBytes.contentEquals(received))
         assertEquals("Bearer $secret", seen[0]["auth"])
         assertNull(seen[1]["auth"], "el segundo servidor no recibe el token")
+    }
+
+    @Test fun zipServedDirectlyIsStreamedToo() {
+        handler = { reply(it, 200, "PK-datos".toByteArray()) }
+        assertEquals("PK-datos", api().openZip(repo, "abc") { String(it.readBytes()) })
+    }
+
+    @Test fun zipErrorsAreTranslated() {
+        handler = { reply(it, 404, """{"message":"Not Found"}""") }
+        assertFailsWith<GitHubException.NotFound> { api().openZip(repo, "abc") { it.readBytes() } }
+    }
+
+    @Test fun branchHeadUsesETagsAndA304CostsNothing() {
+        handler = { ex ->
+            if (ex.requestHeaders.getFirst("If-None-Match") == "\"v1\"") {
+                reply(ex, 304, "")
+            } else {
+                reply(ex, 200, """{"commit":{"sha":"abc"}}""", mapOf("ETag" to "\"v1\""))
+            }
+        }
+        val client = api()
+        assertEquals("abc", client.branchHead(repo, "main"))
+        assertEquals("abc", client.branchHead(repo, "main"))
+        assertEquals(2, seen.size)
+        assertEquals("\"v1\"", seen[1]["etag"], "la segunda pregunta va condicionada")
+        // Otro token no reutiliza lo guardado.
+        val other = HttpGitHubApi({ "otro" }, base)
+        assertEquals("abc", other.branchHead(repo, "main"))
+        assertNull(seen[2]["etag"])
+    }
+
+    @Test fun blobsReuseTheConnection() {
+        handler = { reply(it, 200, "x".toByteArray()) }
+        val client = api()
+        repeat(5) { client.downloadBlob(repo, "s$it", ByteArrayOutputStream()) }
+        assertEquals(1, ports.size, "cinco descargas por la misma conexion (keep-alive)")
     }
 
     @Test fun commitsComeNewestFirstAndFailedCompareIsNull() {
