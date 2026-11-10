@@ -45,7 +45,14 @@ data class SyncState(
     val localDir: String,
 )
 
-data class PlanCounts(val added: Int, val modified: Int, val removed: Int, val unchanged: Int) {
+data class PlanCounts(
+    val added: Int,
+    val modified: Int,
+    val removed: Int,
+    val unchanged: Int,
+    /** Archivos cambiados en el movil que se guardaran aparte antes de pisarlos o quitarlos. */
+    val conflicts: Int = 0,
+) {
     val changes: Int get() = added + modified + removed
 }
 
@@ -69,6 +76,24 @@ sealed interface CheckResult {
     data class NeverSynced(override val headSha: String, val files: Int) : CheckResult
 }
 
+/** Por que se guardo aparte un archivo del movil. */
+enum class ConflictReason {
+    /** Cambio en GitHub y tambien en el movil. */
+    CHANGED_BOTH,
+
+    /** Se borro en GitHub, pero en el movil estaba cambiado. */
+    REMOVED_UPSTREAM,
+
+    /** Habia un archivo del movil (no traido por Traelo) justo donde llega uno nuevo. */
+    UNTRACKED,
+
+    /** "Restaurar": se repone lo de GitHub y lo del movil se guarda por si acaso. */
+    RESTORED,
+}
+
+/** Un archivo del movil que se movio a la carpeta de conflictos en vez de perderse. */
+data class ConflictFile(val path: String, val savedAs: String, val reason: ConflictReason)
+
 data class PullResult(
     val newState: SyncState,
     val downloaded: Int,
@@ -77,22 +102,53 @@ data class PullResult(
     val skipped: List<String>,
     /** Archivos de la rama que no se bajan por el `.traeloignore` del repo. */
     val ignored: Int = 0,
+    /** Archivos del movil guardados aparte para no perderlos. */
+    val conflicts: List<ConflictFile> = emptyList(),
+    /** Carpeta donde quedaron los [conflicts] de esta vez, o null si no hubo. */
+    val conflictDir: String? = null,
+    /** Bytes bajados de la red (archivos o zip). */
+    val bytesDownloaded: Long = 0,
+    /** true si no hizo falta ni pedir el arbol: la rama no cambio y todo estaba en su sitio. */
+    val fastPath: Boolean = false,
 )
 
-enum class SyncPhase { CHECKING, DOWNLOADING_ZIP, EXTRACTING, DOWNLOADING_FILES, REMOVING, SAVING }
+enum class SyncPhase { WAITING, CHECKING, COMPARING, DOWNLOADING_ZIP, DOWNLOADING_FILES, REMOVING, SAVING }
 
-data class SyncProgress(val phase: SyncPhase, val done: Int, val total: Int, val path: String? = null)
+/**
+ * Por donde va una sincronizacion. [done] y [total] cuentan archivos; los bytes sirven para la
+ * barra, la velocidad y el tiempo restante ([etaSeconds] es null si aun no se puede estimar).
+ */
+data class SyncProgress(
+    val phase: SyncPhase,
+    val done: Int,
+    val total: Int,
+    val path: String? = null,
+    val bytesDone: Long = 0,
+    val bytesTotal: Long = 0,
+    val bytesPerSecond: Long = 0,
+    val etaSeconds: Long? = null,
+)
 
 /** Archivos que ya no estan como en GitHub (los toco algo en el movil, por ejemplo Godot). */
 data class LocalChanges(val modified: List<String>, val missing: List<String>) {
     val isEmpty: Boolean get() = modified.isEmpty() && missing.isEmpty()
 }
 
-/** Guarda, por repo, la lista ruta -> huella de los archivos que se trajeron. */
-interface ManifestStore {
-    fun load(repo: RepoRef): Map<String, String>
+/**
+ * Lo que se trajo de un repo, todo junto para guardarlo de una vez: commit, rama y la lista
+ * ruta -> huella. [head] es null en manifiestos antiguos.
+ */
+data class Manifest(val files: Map<String, String>, val head: String? = null, val branch: String? = null) {
+    companion object {
+        val EMPTY = Manifest(emptyMap())
+    }
+}
 
-    fun save(repo: RepoRef, files: Map<String, String>)
+/** Guarda, por repo, el [Manifest] de lo traido. Cada guardado es atomico. */
+interface ManifestStore {
+    fun load(repo: RepoRef): Manifest
+
+    fun save(repo: RepoRef, manifest: Manifest)
 
     fun clear(repo: RepoRef)
 }

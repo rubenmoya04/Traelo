@@ -36,7 +36,10 @@ class SyncEngineTest {
     }
 
     private fun engine(zipThreshold: Int = 60, parallelism: Int = 4) =
-        SyncEngine(api, manifests, zipThreshold, parallelism, clock = { 42L })
+        SyncEngine(
+            api, manifests, ZipPolicy.atLeast(zipThreshold), parallelism,
+            progressIntervalMs = 0, retryDelayMs = 0, clock = { 42L },
+        )
 
     private fun files(vararg pairs: Pair<String, String>) = pairs.toMap()
 
@@ -63,7 +66,7 @@ class SyncEngineTest {
         assertEquals(api.head("main"), result.newState.headSha)
         assertEquals("main", result.newState.branch)
         assertEquals(42L, result.newState.syncedAtMillis)
-        assertEquals(base.keys, manifests.load(repo).keys)
+        assertEquals(base.keys, manifests.files(repo).keys)
         assertEquals(0, api.zipDownloads)
         assertTrue(leftovers().isEmpty())
     }
@@ -122,7 +125,7 @@ class SyncEngineTest {
 
     @Test fun removalNeverDeletesADirectory() = runBlocking {
         val state = firstPull().newState
-        manifests.save(repo, manifests.load(repo) + ("carpeta" to "x".repeat(40)))
+        manifests.save(repo, manifests.load(repo).let { it.copy(files = it.files + ("carpeta" to "x".repeat(40))) })
         File(dir, "carpeta").mkdirs()
         File(dir, "carpeta/dentro.txt").writeText("hola")
         engine().pull(repo, "main", dir, state)
@@ -177,7 +180,7 @@ class SyncEngineTest {
         assertTrue(api.blobDownloads.isEmpty(), "nada que bajar archivo a archivo si el zip coincide")
         for ((path, content) in base) assertEquals(content, read(path))
         assertEquals(4, result.downloaded)
-        assertEquals(base.keys, manifests.load(repo).keys)
+        assertEquals(base.keys, manifests.files(repo).keys)
     }
 
     @Test fun aBigBatchOfChangesLaterAlsoUsesTheZipAndOnlyWritesWhatChanged() = runBlocking {
@@ -194,7 +197,7 @@ class SyncEngineTest {
         assertEquals("sonido 3\n", read("assets/sfx/s3.wav"))
         assertEquals("extends Node2D\n", read("game/scripts/a.gd"))
         assertEquals("editado en el movil\n", read("README.md"), "lo que no cambio en GitHub no se pisa")
-        assertEquals(more.keys, manifests.load(repo).keys)
+        assertEquals(more.keys, manifests.files(repo).keys)
     }
 
     @Test fun aSmallBatchOfChangesStillGoesFileByFile() = runBlocking {
@@ -222,7 +225,7 @@ class SyncEngineTest {
         assertTrue(File(dir, "tests/test_a.gd").isFile, "lo ignorado que ya estaba no se borra")
         assertTrue(File(dir, "README.md").isFile)
         assertFalse(File(dir, "tests/test_b.gd").exists(), "lo ignorado nuevo no se baja")
-        val tracked = manifests.load(repo).keys
+        val tracked = manifests.files(repo).keys
         assertFalse("tests/test_a.gd" in tracked)
         assertFalse("README.md" in tracked)
         assertTrue(".traeloignore" in tracked)
@@ -266,7 +269,7 @@ class SyncEngineTest {
         val result = engine().pull(repo, "main", dir, null)
         assertFalse(File(tmp.root, "escape.txt").exists())
         assertEquals(setOf("enlace-simbolico", "../escape.txt", ".git/config"), result.skipped.toSet())
-        assertEquals(base.keys, manifests.load(repo).keys)
+        assertEquals(base.keys, manifests.files(repo).keys)
     }
 
     @Test fun corruptDownloadIsRejectedAndLeavesNothingBehind() {
@@ -274,26 +277,25 @@ class SyncEngineTest {
         api.corruptBlobs = true
         assertFailsWith<GitHubException.Integrity> { runBlocking { engine().pull(repo, "main", dir, null) } }
         assertTrue(dir.walkTopDown().none { it.isFile }, "no se escribio ningun archivo")
-        assertTrue(manifests.load(repo).isEmpty())
+        assertTrue(manifests.files(repo).isEmpty())
     }
 
-    @Test fun anInterruptedPullKeepsAnHonestManifestAndResumes() = runBlocking {
+    @Test fun anInterruptedFirstPullSavesNothingAndResumesWithoutRedownloading() = runBlocking {
         api.commit("main", base)
         api.failBlobsAfter = 2
         assertFailsWith<IOException> { engine(parallelism = 1).pull(repo, "main", dir, null) }
-        val partial = manifests.load(repo)
-        assertEquals(2, partial.size)
-        for ((path, sha) in partial) assertEquals(sha, GitBlobHash.ofFile(File(dir, path)), "$path esta en disco")
+        assertTrue(manifests.files(repo).isEmpty(), "nada guardado hasta acabar bien")
         assertTrue(leftovers().isEmpty())
         api.failBlobsAfter = -1
         api.blobDownloads.clear()
         val state = engine(parallelism = 1).pull(repo, "main", dir, null).newState
-        assertEquals(2, api.blobDownloads.size, "solo lo que faltaba")
+        assertEquals(2, api.blobDownloads.size, "solo lo que faltaba: lo ya bajado se reconoce por su huella")
         assertEquals(api.head("main"), state.headSha)
         for ((path, content) in base) assertEquals(content, read(path))
+        assertTrue(conflictCopies().isEmpty())
     }
 
-    @Test fun cancellingStopsAndKeepsTheManifestHonest() = runBlocking {
+    @Test fun cancellingStopsAndLeavesNoHalfWrittenFiles() = runBlocking {
         api.commit("main", base)
         lateinit var job: Deferred<PullResult>
         job = async(Dispatchers.Default, start = CoroutineStart.LAZY) {
@@ -303,10 +305,9 @@ class SyncEngineTest {
         }
         job.start()
         assertFailsWith<CancellationException> { job.await() }
-        val partial = manifests.load(repo)
-        assertTrue(partial.size in 2..3)
-        for ((path, sha) in partial) assertEquals(sha, GitBlobHash.ofFile(File(dir, path)))
+        assertTrue(manifests.files(repo).isEmpty())
         assertTrue(leftovers().isEmpty())
+        assertTrue(dir.walkTopDown().filter { it.isFile }.count() in 2..3)
     }
 
     @Test fun truncatedTreeIsRefused() {
@@ -337,7 +338,7 @@ class SyncEngineTest {
         val result = engine().pull(repo, "main", dir, null)
         assertTrue(api.blobDownloads.isEmpty())
         assertEquals(0, result.downloaded)
-        assertEquals(base.keys, manifests.load(repo).keys)
+        assertEquals(base.keys, manifests.files(repo).keys)
     }
 
     @Test fun aSymlinkInsideTheFolderCannotRedirectWrites() = runBlocking {
@@ -348,5 +349,232 @@ class SyncEngineTest {
         val result = engine().pull(repo, "main", dir, null)
         assertTrue(outside.list().isNullOrEmpty())
         assertTrue("enlace/dentro.txt" in result.skipped)
+    }
+
+    // ------------------------------------------------------------ conflictos y estado
+
+    private fun conflictCopies(): Map<String, String> {
+        val root = File(tmp.root, "proyecto-conflictos")
+        if (!root.isDirectory) return emptyMap()
+        return root.walkTopDown().filter { it.isFile }.associate { it.name to it.readText() }
+    }
+
+    @Test fun aPullDoesNotSilentlyOverwriteAFileEditedOnThePhone() = runBlocking {
+        val state = firstPull().newState
+        File(dir, "game/scripts/a.gd").writeText("EDITADO EN EL MOVIL\n")
+        api.commit("main", base + files("game/scripts/a.gd" to "extends Node2D\n"))
+        engine().pull(repo, "main", dir, state)
+        assertEquals("extends Node2D\n", read("game/scripts/a.gd"), "llega lo de GitHub")
+        assertEquals("EDITADO EN EL MOVIL\n", conflictCopies()["a.gd"], "lo del movil se guarda aparte")
+    }
+
+    @Test fun aBigBatchFromTheZipAlsoKeepsPhoneEdits() = runBlocking {
+        val state = firstPull(engine(zipThreshold = 3)).newState
+        File(dir, "game/scripts/a.gd").writeText("EDITADO EN EL MOVIL\n")
+        api.commit("main", base.mapValues { it.value + "v2\n" })
+        api.zipDownloads = 0
+        engine(zipThreshold = 3).pull(repo, "main", dir, state)
+        assertEquals(1, api.zipDownloads)
+        assertEquals("extends Node\nv2\n", read("game/scripts/a.gd"))
+        assertEquals("EDITADO EN EL MOVIL\n", conflictCopies()["a.gd"])
+    }
+
+    @Test fun aFileRemovedOnGitHubButEditedOnThePhoneIsKeptAside() = runBlocking {
+        val state = firstPull().newState
+        File(dir, "game/scripts/sub/b.gd").writeText("lo cambie yo\n")
+        api.commit("main", base - "game/scripts/sub/b.gd")
+        engine().pull(repo, "main", dir, state)
+        assertFalse(File(dir, "game/scripts/sub/b.gd").exists())
+        assertEquals("lo cambie yo\n", conflictCopies()["b.gd"])
+    }
+
+    @Test fun anUntrackedPhoneFileInTheWayOfANewFileIsKeptAside() = runBlocking {
+        val state = firstPull().newState
+        File(dir, "game/nuevo.gd").writeText("mio, sin subir\n")
+        api.commit("main", base + files("game/nuevo.gd" to "de GitHub\n"))
+        engine().pull(repo, "main", dir, state)
+        assertEquals("de GitHub\n", read("game/nuevo.gd"))
+        assertEquals("mio, sin subir\n", conflictCopies()["nuevo.gd"])
+    }
+
+    @Test fun twoPullsOfTheSameRepoRunOneAfterTheOther() = runBlocking {
+        api.commit("main", base)
+        val firstBlocked = java.util.concurrent.CountDownLatch(1)
+        val releaseFirst = java.util.concurrent.CountDownLatch(1)
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        api.beforeBlob = {
+            if (calls.incrementAndGet() == 1) {
+                firstBlocked.countDown()
+                releaseFirst.await()
+                throw IOException("se corta la primera")
+            }
+        }
+        val e = engine(parallelism = 1)
+        val first = async(Dispatchers.Default) { runCatching { e.pull(repo, "main", dir, null) } }
+        firstBlocked.await()
+        val target = api.commit("main", base + files("extra.txt" to "extra\n"))
+        val second = async(Dispatchers.Default) { e.pull(repo, "main", dir, null) }
+        Thread.sleep(300)
+        val callsWhileFirstRuns = calls.get()
+        releaseFirst.countDown()
+        assertEquals(1, callsWhileFirstRuns, "la segunda espera a que acabe la primera")
+        assertTrue(first.await().isFailure)
+        val result = second.await()
+        assertEquals(target, result.newState.headSha)
+        assertEquals((base + files("extra.txt" to "extra\n")).keys, manifests.files(repo).keys)
+        for ((path, sha) in manifests.files(repo)) assertEquals(sha, GitBlobHash.ofFile(File(dir, path)))
+        assertTrue(leftovers().isEmpty())
+    }
+
+    @Test fun aFailedPullLeavesTheSavedStateUntouched() = runBlocking {
+        val state = firstPull().newState
+        val before = manifests.files(repo)
+        api.commit("main", base + files("README.md" to "v2\n", "game/x.gd" to "x\n", "game/y.gd" to "y\n"))
+        api.failBlobsAfter = api.blobDownloads.size + 2
+        assertFailsWith<IOException> { engine(parallelism = 1).pull(repo, "main", dir, state) }
+        assertEquals(before, manifests.files(repo), "solo se guarda al final de una sincronizacion correcta")
+        api.failBlobsAfter = -1
+        api.blobDownloads.clear()
+        val done = engine(parallelism = 1).pull(repo, "main", dir, state)
+        assertEquals(1, api.blobDownloads.size, "retoma: solo baja lo que faltaba")
+        assertEquals("v2\n", read("README.md"))
+        assertEquals(api.head("main"), done.newState.headSha)
+        assertTrue(conflictCopies().isEmpty(), "lo bajado a medias no cuenta como cambio del movil")
+    }
+
+    // ------------------------------------------------------------ velocidad y avisos
+
+    @Test fun nothingNewDoesNotEvenAskForTheTree() = runBlocking {
+        val state = firstPull().newState
+        api.treeCalls = 0
+        val result = engine().pull(repo, "main", dir, state)
+        assertTrue(result.fastPath)
+        assertEquals(0, api.treeCalls)
+        File(dir, "README.md").delete()
+        val again = engine().pull(repo, "main", dir, state)
+        assertFalse(again.fastPath, "si falta algo se mira el arbol y se repone")
+        assertEquals("hola\n", read("README.md"))
+    }
+
+    @Test fun checkThenPullAsksForTheTreeOnce() = runBlocking {
+        val state = firstPull().newState
+        api.commit("main", base + files("x.txt" to "x\n"))
+        api.treeCalls = 0
+        val e = engine()
+        e.check(repo, "main", state)
+        e.pull(repo, "main", dir, state)
+        assertEquals(1, api.treeCalls)
+    }
+
+    @Test fun conflictsAreReportedWithWhereTheyWereSaved() = runBlocking {
+        val state = firstPull().newState
+        File(dir, "game/scripts/a.gd").writeText("mio\n")
+        File(dir, "game/scripts/sub/b.gd").writeText("mio tambien\n")
+        api.commit("main", base - "game/scripts/sub/b.gd" + files("game/scripts/a.gd" to "nuevo\n"))
+        val check = engine().check(repo, "main", state)
+        assertIs<CheckResult.Outdated>(check)
+        assertEquals(2, check.counts.conflicts, "se avisa antes de traer")
+        val seen = java.util.concurrent.ConcurrentLinkedQueue<ConflictFile>()
+        val result = engine().pull(repo, "main", dir, state, onConflict = { seen += it })
+        assertEquals(
+            listOf("game/scripts/a.gd" to ConflictReason.CHANGED_BOTH, "game/scripts/sub/b.gd" to ConflictReason.REMOVED_UPSTREAM),
+            result.conflicts.map { it.path to it.reason },
+        )
+        assertEquals(result.conflicts.toSet(), seen.toSet())
+        val conflictDir = assertNotNull(result.conflictDir)
+        assertTrue(conflictDir.startsWith(File(tmp.root, "proyecto-conflictos").path), "fuera del proyecto")
+        for (c in result.conflicts) assertTrue(File(c.savedAs).isFile && c.savedAs.startsWith(conflictDir))
+        assertEquals("mio\n", File(result.conflicts[0].savedAs).readText())
+        assertFalse(File(dir, "proyecto-conflictos").exists())
+    }
+
+    @Test fun pristineFilesAreNotReportedAsConflicts() = runBlocking {
+        val state = firstPull().newState
+        api.commit("main", base - "README.md" + files("game/scripts/a.gd" to "nuevo\n"))
+        val result = engine().pull(repo, "main", dir, state)
+        assertTrue(result.conflicts.isEmpty())
+        assertNull(result.conflictDir)
+        assertTrue(conflictCopies().isEmpty())
+    }
+
+    @Test fun restoreKeepsACopyOfWhatItReplaces() = runBlocking {
+        val state = firstPull().newState
+        File(dir, "game/scripts/a.gd").writeText("EDITADO\n")
+        val result = engine().pull(repo, "main", dir, state, verifyLocal = true)
+        assertEquals("extends Node\n", read("game/scripts/a.gd"))
+        assertEquals(listOf(ConflictReason.RESTORED), result.conflicts.map { it.reason })
+        assertEquals("EDITADO\n", conflictCopies()["a.gd"])
+    }
+
+    @Test fun twoConflictsOnTheSamePathDoNotOverwriteEachOther() = runBlocking {
+        var state = firstPull().newState
+        File(dir, "README.md").writeText("primera edicion\n")
+        api.commit("main", base + files("README.md" to "v2\n"))
+        state = engine().pull(repo, "main", dir, state).newState
+        File(dir, "README.md").writeText("segunda edicion\n")
+        api.commit("main", base + files("README.md" to "v3\n"))
+        engine().pull(repo, "main", dir, state)
+        val copies = File(tmp.root, "proyecto-conflictos").walkTopDown().filter { it.isFile }.map { it.readText() }.toSet()
+        assertEquals(setOf("primera edicion\n", "segunda edicion\n"), copies)
+    }
+
+    @Test fun aZipCutHalfwayFallsBackToFileByFile() = runBlocking {
+        api.commit("main", base + (1..20).associate { "assets/s$it.txt" to "sonido $it ".repeat(50) })
+        api.zipBreaksAfterBytes = 900
+        val result = engine(zipThreshold = 2).pull(repo, "main", dir, null)
+        assertEquals(1, api.zipDownloads)
+        assertTrue(api.blobDownloads.isNotEmpty(), "lo que faltaba se bajo suelto")
+        assertEquals(24, result.downloaded)
+        assertEquals("sonido 7 ".repeat(50), read("assets/s7.txt"))
+        assertTrue(leftovers().isEmpty())
+    }
+
+    @Test fun flakyNetworkIsRetried() = runBlocking {
+        api.commit("main", base)
+        api.flakyBlobs = 2
+        engine().pull(repo, "main", dir, null)
+        for ((path, content) in base) assertEquals(content, read(path))
+    }
+
+    @Test fun progressCountsFilesAndBytes() = runBlocking {
+        api.commit("main", base)
+        val events = java.util.concurrent.ConcurrentLinkedQueue<SyncProgress>()
+        engine().pull(repo, "main", dir, null) { events += it }
+        val downloads = events.filter { it.phase == SyncPhase.DOWNLOADING_FILES }
+        val total = base.values.sumOf { it.toByteArray().size.toLong() }
+        assertTrue(downloads.all { it.total == 4 && it.bytesTotal == total })
+        assertEquals(4, downloads.maxOf { it.done })
+        assertEquals(total, downloads.maxOf { it.bytesDone })
+        assertEquals(SyncPhase.SAVING, events.last().phase)
+    }
+
+    @Test fun zipProgressAndBytesAreReported() = runBlocking {
+        api.commit("main", base)
+        val events = java.util.concurrent.ConcurrentLinkedQueue<SyncProgress>()
+        val result = engine(zipThreshold = 2).pull(repo, "main", dir, null) { events += it }
+        val zip = events.filter { it.phase == SyncPhase.DOWNLOADING_ZIP }
+        assertEquals(4, zip.maxOf { it.done })
+        assertTrue(zip.maxOf { it.bytesDone } > 0)
+        assertTrue(result.bytesDownloaded > 0)
+    }
+
+    @Test fun aSecondPullWaitsAndSaysSo() = runBlocking {
+        api.commit("main", base)
+        val blocked = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        api.beforeBlob = { blocked.countDown(); release.await() }
+        val e = engine(parallelism = 1)
+        val first = async(Dispatchers.Default) { e.pull(repo, "main", dir, null) }
+        blocked.await()
+        assertTrue(e.isBusy(repo))
+        val phases = java.util.concurrent.ConcurrentLinkedQueue<SyncPhase>()
+        val second = async(Dispatchers.Default) { e.pull(repo, "main", dir, null) { phases += it.phase } }
+        Thread.sleep(200)
+        api.beforeBlob = {}
+        release.countDown()
+        first.await()
+        second.await()
+        assertEquals(SyncPhase.WAITING, phases.first())
+        assertFalse(e.isBusy(repo))
     }
 }

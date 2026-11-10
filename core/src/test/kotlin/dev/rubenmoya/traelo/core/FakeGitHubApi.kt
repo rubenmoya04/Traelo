@@ -1,7 +1,10 @@
 package dev.rubenmoya.traelo.core
 
-import java.io.File
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.FilterInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -24,6 +27,9 @@ class FakeGitHubApi : GitHubApi {
     var extraZipEntries: Map<String, ByteArray> = emptyMap()
     var zipOverrides: Map<String, ByteArray> = emptyMap()
 
+    /** Se llama antes de servir cada blob (para bloquear o fallar a mitad de una descarga). */
+    @Volatile var beforeBlob: (sha: String) -> Unit = {}
+
     fun commit(branch: String, files: Map<String, String>): String {
         val sha = "c%03d".format(++counter) + "0".repeat(36)
         snapshots[sha] = files.mapValues { it.value.toByteArray() }
@@ -42,7 +48,13 @@ class FakeGitHubApi : GitHubApi {
     override fun branchHead(repo: RepoRef, branch: String): String =
         heads[branch] ?: throw GitHubException.NotFound("la rama $branch")
 
+    var treeCalls = 0
+
+    /** Fallos de red de mentira: los primeros N blobs fallan una vez y luego van bien. */
+    var flakyBlobs = 0
+
     override fun tree(repo: RepoRef, sha: String): TreeResult {
+        treeCalls++
         val files = snapshots.getValue(sha)
         val entries = files.map { (path, data) -> TreeEntry(path, GitBlobHash.ofBytes(data), data.size.toLong()) }
         return TreeResult(entries.sortedBy { it.path } + extraTreeEntries, extraSkipped, truncatedTree)
@@ -56,20 +68,52 @@ class FakeGitHubApi : GitHubApi {
 
     override fun downloadBlob(repo: RepoRef, sha: String, out: OutputStream) {
         val number = registerDownload(sha)
+        beforeBlob(sha)
+        synchronized(this) {
+            if (flakyBlobs > 0) {
+                flakyBlobs--
+                throw GitHubException.Network(IOException("corte de red"))
+            }
+        }
         if (failBlobsAfter in 0 until number) throw IOException("fallo simulado")
         val data = snapshots.values.flatMap { it.values }.firstOrNull { GitBlobHash.ofBytes(it) == sha }
             ?: throw GitHubException.NotFound("el blob $sha")
         out.write(if (corruptBlobs) data + byteArrayOf(1) else data)
     }
 
-    override fun downloadZip(repo: RepoRef, ref: String, dest: File) {
+    /** Corta el zip (como un fallo de red) despues de servir estos bytes. -1 para no cortarlo. */
+    var zipBreaksAfterBytes = -1
+
+    override fun <T> openZip(repo: RepoRef, ref: String, read: (InputStream) -> T): T {
         zipDownloads++
         val files = snapshots.getValue(ref)
-        ZipOutputStream(dest.outputStream()).use { zip ->
+        val buffer = ByteArrayOutputStream()
+        ZipOutputStream(buffer).use { zip ->
             zip.putNextEntry(ZipEntry("owner-repo-abc1234/"))
             zip.closeEntry()
             for ((path, data) in files) put(zip, "owner-repo-abc1234/$path", zipOverrides[path] ?: data)
             for ((name, data) in extraZipEntries) put(zip, name, data)
+        }
+        val bytes = buffer.toByteArray()
+        val limit = zipBreaksAfterBytes
+        val input: InputStream = if (limit < 0) ByteArrayInputStream(bytes) else BreakingStream(bytes, limit)
+        return input.use(read)
+    }
+
+    private class BreakingStream(bytes: ByteArray, private val limit: Int) : FilterInputStream(ByteArrayInputStream(bytes)) {
+        private var served = 0
+
+        override fun read(): Int {
+            if (served >= limit) throw GitHubException.Network(IOException("zip cortado"))
+            served++
+            return super.read()
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (served >= limit) throw GitHubException.Network(IOException("zip cortado"))
+            val n = super.read(b, off, minOf(len, limit - served))
+            if (n > 0) served += n
+            return n
         }
     }
 
@@ -85,15 +129,17 @@ class FakeGitHubApi : GitHubApi {
 
 /** Manifiestos en memoria. */
 class MemoryManifests : ManifestStore {
-    val data = HashMap<String, Map<String, String>>()
+    val data = HashMap<String, Manifest>()
 
-    override fun load(repo: RepoRef): Map<String, String> = data[repo.key] ?: emptyMap()
+    override fun load(repo: RepoRef): Manifest = data[repo.key] ?: Manifest.EMPTY
 
-    override fun save(repo: RepoRef, files: Map<String, String>) {
-        data[repo.key] = HashMap(files)
+    override fun save(repo: RepoRef, manifest: Manifest) {
+        data[repo.key] = manifest.copy(files = HashMap(manifest.files))
     }
 
     override fun clear(repo: RepoRef) {
         data.remove(repo.key)
     }
+
+    fun files(repo: RepoRef): Map<String, String> = load(repo).files
 }
