@@ -31,3 +31,13 @@ tasks.test {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+
+// Benchmark de sincronizacion con red simulada: ./gradlew :core:benchmark
+tasks.register<JavaExec>("benchmark") {
+    group = "verification"
+    description = "Mide la sincronizacion con un repo sintetico de 3000 archivos y red simulada."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.rubenmoya.traelo.core.bench.SyncBenchmarkKt")
+    maxHeapSize = "1g"
+    (project.findProperty("benchArgs") as String?)?.let { args(it.split(" ")) }
+}
