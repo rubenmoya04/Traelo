@@ -37,8 +37,8 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
 
-      - name: Tests del motor
-        run: ./gradlew :core:test --console=plain
+      - name: Tests del motor y de la app
+        run: ./gradlew :core:test :app:testDebugUnitTest --console=plain
 
       - name: Compilar APK
         env:
