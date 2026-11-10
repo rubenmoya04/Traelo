@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 4
-        versionName = "0.4.0"
+        versionName = "0.5.0"
     }
 
     // Clave de prueba publica y compartida: asi todas las APK (CI y locales) llevan la misma firma
