@@ -138,6 +138,7 @@ fun TraeloApp(vm: TraeloViewModel) {
                             folderLauncher.launch(null)
                         },
                         confirmRestore = vm::confirmRestore,
+                        removeIgnored = vm::removeIgnoredLeftovers,
                         dismissRestore = vm::dismissRestore,
                         dismissGodotMissing = vm::dismissGodotMissing,
                         openSettings = vm::openSettings,

@@ -123,6 +123,10 @@ data class DetailState(
     val conflictDir: String? = null,
     /** "Traer y abrir" se quedo sin abrir Godot para ensenar antes los conflictos. */
     val launchPending: Boolean = false,
+    /** Archivos que el `.traeloignore` ignora y siguen en el movil sin huella conocida. */
+    val ignoredLeftovers: List<String> = emptyList(),
+    /** Se estan apartando con "Quitar lo ignorado". */
+    val movingIgnored: Boolean = false,
 ) {
     val isRunning: Boolean get() = sync is SyncUi.Running
 }
@@ -419,6 +423,7 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
         push(Screen.Repo(ref))
         runCheck()
         refreshProject()
+        refreshIgnoredLeftovers()
     }
 
     private fun plannedDir(ref: RepoRef): String = File(settings.baseDir, ref.name).path
@@ -496,6 +501,61 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Cuenta lo ignorado que sigue en el movil (sin red: usa las reglas de la ultima vez). */
+    private fun refreshIgnoredLeftovers() {
+        val d = _detail.value ?: return
+        val ref = d.repo.ref
+        val saved = d.saved
+        if (saved == null) {
+            updateDetail(ref) { it.copy(ignoredLeftovers = emptyList()) }
+            return
+        }
+        viewModelScope.launch {
+            val found = leftoversOrEmpty(saved)
+            updateDetail(ref) { if (it.saved?.localDir == saved.localDir) it.copy(ignoredLeftovers = found) else it }
+        }
+    }
+
+    private suspend fun leftoversOrEmpty(state: SyncState): List<String> =
+        try {
+            engine.findIgnoredLeftovers(state)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+    /** "Quitar lo ignorado" (ya confirmado): lo aparta a la carpeta de conflictos, no borra nada. */
+    fun removeIgnoredLeftovers() {
+        val d = _detail.value ?: return
+        val saved = d.saved ?: return
+        if (d.isRunning || d.movingIgnored || d.ignoredLeftovers.isEmpty()) return
+        val ref = d.repo.ref
+        val paths = d.ignoredLeftovers
+        updateDetail(ref) { it.copy(movingIgnored = true, notice = null, error = null) }
+        viewModelScope.launch {
+            try {
+                val moved = engine.moveIgnoredLeftovers(saved, paths)
+                val left = leftoversOrEmpty(saved)
+                // Si "Traer y abrir" estaba esperando, sigue esperando: la tarjeta de lo apartado ofrece abrir.
+                updateDetail(ref) {
+                    it.copy(
+                        movingIgnored = false,
+                        ignoredLeftovers = left,
+                        conflicts = moved.conflicts,
+                        conflictDir = moved.conflictDir,
+                        launchPending = it.launchPending && (moved.conflicts.isNotEmpty() || left.isNotEmpty()),
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val info = fixAction(describeError(e))
+                updateDetail(ref) { it.copy(movingIgnored = false, error = info) }
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- traer
 
     /**
@@ -558,12 +618,16 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
                         localDir = result.newState.localDir,
                         conflicts = result.conflicts,
                         conflictDir = result.conflictDir,
-                        launchPending = thenOpen && result.conflicts.isNotEmpty(),
                     )
                 }
                 val project = withContext(Dispatchers.IO) { ProjectFinder.find(File(result.newState.localDir)) }
-                updateDetail(ref) { it.copy(project = project, projectChecked = true) }
-                if (thenOpen && result.conflicts.isEmpty()) launchGodot(project?.dir)
+                // Restos ignorados (tests viejos, por ejemplo): Godot los analizaria, asi que se avisa antes de abrir.
+                val leftovers = leftoversOrEmpty(result.newState)
+                val hold = thenOpen && (result.conflicts.isNotEmpty() || leftovers.isNotEmpty())
+                updateDetail(ref) {
+                    it.copy(project = project, projectChecked = true, ignoredLeftovers = leftovers, launchPending = hold)
+                }
+                if (thenOpen && !hold) launchGodot(project?.dir)
             } catch (e: CancellationException) {
                 updateDetail(ref) { it.copy(sync = SyncUi.Idle, notice = UiText.of(R.string.notice_cancelled)) }
                 throw e
@@ -651,6 +715,7 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
                         check = null,
                         project = null,
                         localDir = plannedDir(ref),
+                        ignoredLeftovers = emptyList(),
                         notice = UiText.of(R.string.notice_deleted),
                     )
                 }

@@ -77,6 +77,8 @@ class RepoActions(
     val deleteLocal: () -> Unit,
     val pickFolder: () -> Unit,
     val confirmRestore: () -> Unit,
+    /** "Quitar lo ignorado", ya confirmado en el dialogo. */
+    val removeIgnored: () -> Unit,
     val dismissRestore: () -> Unit,
     val dismissGodotMissing: () -> Unit,
     val openSettings: () -> Unit,
@@ -85,6 +87,7 @@ class RepoActions(
 
 private const val MAX_COMMITS = 20
 private const val MAX_CONFLICTS_SHOWN = 6
+private const val MAX_LEFTOVERS_SHOWN = 4
 
 /** Lo que se ve en la tarjeta grande: una sola idea, "¿estoy al dia?". */
 private fun displayStatus(d: DetailState): RepoStatus = when {
@@ -174,6 +177,9 @@ fun RepoScreen(
             }
             if (detail.conflicts.isNotEmpty()) {
                 ConflictsCard(detail, actions)
+            }
+            if (detail.ignoredLeftovers.isNotEmpty() && !running) {
+                IgnoredLeftoversCard(detail, actions)
             }
             detail.notice?.let { if (!running) NoticeCard(it) }
             if (detail.check is CheckResult.Outdated && !running) {
@@ -589,14 +595,22 @@ private fun ConflictsCard(detail: DetailState, actions: RepoActions) {
         ),
     ) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            val onlyIgnored = conflicts.all { it.reason == ConflictReason.IGNORED }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(Icons.Filled.Warning, contentDescription = null, modifier = Modifier.size(28.dp))
                 Text(
-                    pluralStringResource(R.plurals.conflicts_title, conflicts.size, conflicts.size),
+                    pluralStringResource(
+                        if (onlyIgnored) R.plurals.conflicts_title_ignored else R.plurals.conflicts_title,
+                        conflicts.size,
+                        conflicts.size,
+                    ),
                     style = MaterialTheme.typography.titleLarge,
                 )
             }
-            Text(stringResource(R.string.conflicts_body), style = MaterialTheme.typography.bodyLarge)
+            Text(
+                stringResource(if (onlyIgnored) R.string.conflicts_body_ignored else R.string.conflicts_body),
+                style = MaterialTheme.typography.bodyLarge,
+            )
             detail.conflictDir?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
             }
@@ -637,8 +651,74 @@ private fun reasonText(conflict: ConflictFile): String = stringResource(
         ConflictReason.REMOVED_UPSTREAM -> R.string.conflict_reason_removed
         ConflictReason.UNTRACKED -> R.string.conflict_reason_untracked
         ConflictReason.RESTORED -> R.string.conflict_reason_restored
+        ConflictReason.IGNORED -> R.string.conflict_reason_ignored
     },
 )
+
+/** Lo ignorado que sigue en el movil sin huella conocida: se cuenta y se aparta solo si se pide. */
+@Composable
+private fun IgnoredLeftoversCard(detail: DetailState, actions: RepoActions) {
+    val leftovers = detail.ignoredLeftovers
+    val shown = leftovers.take(MAX_LEFTOVERS_SHOWN)
+    var confirm by rememberSaveable { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                pluralStringResource(R.plurals.ignored_left_title, leftovers.size, leftovers.size),
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Text(stringResource(R.string.ignored_left_body), style = MaterialTheme.typography.bodyLarge)
+            shown.forEach {
+                Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (leftovers.size > shown.size) {
+                Text(
+                    pluralStringResource(R.plurals.changes_more, leftovers.size - shown.size, leftovers.size - shown.size),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            BigButton(
+                text = stringResource(if (detail.movingIgnored) R.string.ignored_left_busy else R.string.ignored_left_action),
+                onClick = { confirm = true },
+                enabled = !detail.movingIgnored,
+                tonal = true,
+                height = 56.dp,
+            )
+            if (detail.launchPending && detail.conflicts.isEmpty()) {
+                Text(stringResource(R.string.ignored_left_godot_waiting), style = MaterialTheme.typography.bodyMedium)
+                BigButton(
+                    text = stringResource(R.string.action_open_anyway),
+                    onClick = actions.openAfterConflicts,
+                    outlined = true,
+                    height = 52.dp,
+                )
+            }
+        }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text(stringResource(R.string.ignored_left_confirm_title)) },
+            text = {
+                Text(
+                    pluralStringResource(R.plurals.ignored_left_confirm_body, leftovers.size, leftovers.size),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false
+                    actions.removeIgnored()
+                }) { Text(stringResource(R.string.ignored_left_action)) }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+}
 
 @Composable
 private fun NoticeCard(text: UiText) {

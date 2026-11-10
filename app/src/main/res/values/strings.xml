@@ -180,7 +180,28 @@
     <string name="conflict_reason_removed">borrado en GitHub</string>
     <string name="conflict_reason_untracked">ya había uno tuyo ahí</string>
     <string name="conflict_reason_restored">restaurado</string>
+    <string name="conflict_reason_ignored">ignorado por .traeloignore</string>
     <string name="conflict_line">%1$s (%2$s)</string>
+    <plurals name="conflicts_title_ignored">
+        <item quantity="one">%d archivo ignorado apartado</item>
+        <item quantity="other">%d archivos ignorados apartados</item>
+    </plurals>
+    <string name="conflicts_body_ignored">Los ignora el .traeloignore del repo. No se ha borrado nada, están en:</string>
+
+    <!-- Lo ignorado que sigue en el movil -->
+    <plurals name="ignored_left_title">
+        <item quantity="one">%d archivo ignorado sigue en el móvil</item>
+        <item quantity="other">%d archivos ignorados siguen en el móvil</item>
+    </plurals>
+    <string name="ignored_left_body">Los ignora el .traeloignore, pero siguen aquí de antes o los creó algo en el móvil. Si son scripts viejos, Godot puede dar errores al abrir el proyecto.</string>
+    <string name="ignored_left_action">Quitar lo ignorado</string>
+    <string name="ignored_left_busy">Apartando…</string>
+    <string name="ignored_left_godot_waiting">No he abierto Godot todavía para que puedas quitarlos antes.</string>
+    <string name="ignored_left_confirm_title">¿Quitar lo ignorado?</string>
+    <plurals name="ignored_left_confirm_body">
+        <item quantity="one">Muevo %d archivo a la carpeta de conflictos, fuera del proyecto. No se borra: si te hace falta, lo tienes ahí.</item>
+        <item quantity="other">Muevo %d archivos a la carpeta de conflictos, fuera del proyecto. No se borra nada: si te hace falta algo, lo tienes ahí.</item>
+    </plurals>
 
     <string name="leave_title">¿Cancelar la descarga?</string>
     <string name="leave_body">Si sales ahora, la descarga se corta. Puedes volver a traer cuando quieras.</string>
