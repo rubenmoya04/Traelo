@@ -209,7 +209,7 @@ class SyncEngineTest {
         assertEquals(1, api.blobDownloads.size)
     }
 
-    @Test fun ignoredPathsAreNotDownloadedNorDeleted() = runBlocking {
+    @Test fun ignoredPathsAreNotDownloadedAndUntouchedOnesGoAway() = runBlocking {
         val withTests = base + ("tests/test_a.gd" to "# test\n")
         api.commit("main", withTests)
         val state = engine().pull(repo, "main", dir, null).newState
@@ -220,15 +220,143 @@ class SyncEngineTest {
         val check = engine().check(repo, "main", state)
         assertIs<CheckResult.Outdated>(check)
         assertEquals(1, check.counts.added, "solo el propio .traeloignore es nuevo")
+        assertEquals(2, check.counts.removed, "lo ignorado que trajo Traelo se va a quitar")
         val result = engine().pull(repo, "main", dir, state)
         assertEquals(3, result.ignored)
-        assertTrue(File(dir, "tests/test_a.gd").isFile, "lo ignorado que ya estaba no se borra")
-        assertTrue(File(dir, "README.md").isFile)
+        assertEquals(2, result.removed)
+        assertFalse(File(dir, "tests/test_a.gd").exists(), "lo ignorado sin tocar se quita")
+        assertFalse(File(dir, "README.md").exists())
         assertFalse(File(dir, "tests/test_b.gd").exists(), "lo ignorado nuevo no se baja")
         val tracked = manifests.files(repo).keys
         assertFalse("tests/test_a.gd" in tracked)
         assertFalse("README.md" in tracked)
         assertTrue(".traeloignore" in tracked)
+    }
+
+    // ------------------------------------------------------------ limpiar lo ignorado
+
+    private val withOldTests = base + files(
+        "tests/test_walk.gd" to "extends GdUnitTestSuite\n",
+        "tests/test_sock_sale.gd" to "var s := SockSale.new()\n",
+        "tests/basement/test_basement_a.gd" to "var b := Basement.new()\n",
+    )
+
+    /** Los tests ya se habian traido; luego llega el `.traeloignore` y en GitHub se borran algunos. */
+    private fun pullThenIgnoreTests(): SyncState = runBlocking {
+        api.commit("main", withOldTests)
+        val state = engine().pull(repo, "main", dir, null).newState
+        api.commit(
+            "main",
+            withOldTests - "tests/test_sock_sale.gd" - "tests/basement/test_basement_a.gd" +
+                (".traeloignore" to "tests/\ntools/\n"),
+        )
+        state
+    }
+
+    @Test fun anIgnoredFileThatWasNotTouchedIsRemoved() = runBlocking {
+        val state = pullThenIgnoreTests()
+        val result = engine().pull(repo, "main", dir, state)
+        assertFalse(File(dir, "tests/test_walk.gd").exists(), "sigue en GitHub pero ahora se ignora")
+        assertFalse(File(dir, "tests/test_sock_sale.gd").exists(), "se ignora y ademas ya no esta en la rama")
+        assertEquals(3, result.removed)
+        assertTrue(result.conflicts.isEmpty())
+        assertTrue(conflictCopies().isEmpty(), "sin tocar se borra, no se aparta")
+        assertTrue(manifests.files(repo).keys.none { it.startsWith("tests/") })
+        assertTrue(engine().findIgnoredLeftovers(result.newState).isEmpty())
+    }
+
+    @Test fun anIgnoredFileEditedOnThePhoneIsKeptAside() = runBlocking {
+        val state = pullThenIgnoreTests()
+        File(dir, "tests/test_sock_sale.gd").writeText("lo arregle en el movil\n")
+        val result = engine().pull(repo, "main", dir, state)
+        assertFalse(File(dir, "tests/test_sock_sale.gd").exists())
+        assertEquals(listOf("tests/test_sock_sale.gd" to ConflictReason.IGNORED), result.conflicts.map { it.path to it.reason })
+        assertEquals("lo arregle en el movil\n", conflictCopies()["test_sock_sale.gd"])
+        assertNotNull(result.conflictDir)
+        Unit
+    }
+
+    @Test fun aFileTheUserMadeInAnIgnoredFolderIsNeverTouched() = runBlocking {
+        val state = pullThenIgnoreTests()
+        File(dir, "tests/mio.gd").writeText("mio\n")
+        File(dir, "tests/test_walk.gd.uid").writeText("uid://abc\n")
+        val result = engine().pull(repo, "main", dir, state)
+        assertEquals("mio\n", read("tests/mio.gd"))
+        assertEquals("uid://abc\n", read("tests/test_walk.gd.uid"))
+        assertFalse(File(dir, "tests/test_walk.gd").exists())
+        assertTrue(result.conflicts.isEmpty())
+        assertEquals(
+            listOf("tests/mio.gd", "tests/test_walk.gd.uid"),
+            engine().findIgnoredLeftovers(result.newState),
+            "se cuentan, pero no se borran solos",
+        )
+    }
+
+    @Test fun theGodotCacheIsNeverTouched() = runBlocking {
+        api.commit("main", base + (".godot/global_script_class_cache.cfg" to "list=[]\n"))
+        val state = engine().pull(repo, "main", dir, null).newState
+        File(dir, ".godot/imported").mkdirs()
+        File(dir, ".godot/imported/cache.bin").writeText("cache")
+        api.commit("main", base + (".traeloignore" to ".godot/\n*.cfg\n*.bin\n"))
+        val result = engine().pull(repo, "main", dir, state)
+        assertEquals("list=[]\n", read(".godot/global_script_class_cache.cfg"))
+        assertEquals("cache", read(".godot/imported/cache.bin"))
+        assertTrue(result.conflicts.isEmpty())
+        assertTrue(engine().findIgnoredLeftovers(result.newState).isEmpty(), ".godot ni se cuenta")
+    }
+
+    @Test fun foldersLeftEmptyAreRemoved() = runBlocking {
+        val state = pullThenIgnoreTests()
+        File(dir, "game/vacia-mia").mkdirs()
+        engine().pull(repo, "main", dir, state)
+        assertFalse(File(dir, "tests/basement").exists())
+        assertFalse(File(dir, "tests").exists())
+        assertTrue(File(dir, "game/vacia-mia").isDirectory, "carpetas que no eran de lo borrado no se tocan")
+        assertTrue(File(dir, "game/scripts/a.gd").isFile)
+    }
+
+    @Test fun anOldStateWithoutHashesIsNotCleanedOnItsOwn() = runBlocking {
+        val state = pullThenIgnoreTests()
+        // Asi lo dejaba la 0.5.0: sincronizado con el .traeloignore, pero sin las huellas de lo ignorado.
+        val head = api.head("main")
+        val tree = (withOldTests - "tests/test_sock_sale.gd" - "tests/basement/test_basement_a.gd")
+            .mapValues { GitBlobHash.ofBytes(it.value.toByteArray()) }
+            .filterKeys { !it.startsWith("tests/") } + (".traeloignore" to GitBlobHash.ofBytes("tests/\ntools/\n".toByteArray()))
+        manifests.save(repo, Manifest(tree + ("tests/test_walk.gd" to ""), head, "main"))
+        File(dir, ".traeloignore").writeText("tests/\ntools/\n")
+        val old = state.copy(headSha = head)
+
+        val result = engine().pull(repo, "main", dir, old)
+        assertFalse(result.fastPath, "con un estado antiguo se mira el arbol una vez")
+        assertTrue(File(dir, "tests/test_walk.gd").isFile, "sin huella no se borra")
+        assertTrue(File(dir, "tests/test_sock_sale.gd").isFile)
+        assertTrue(File(dir, "tests/basement/test_basement_a.gd").isFile)
+        assertTrue(result.conflicts.isEmpty())
+        val leftovers = engine().findIgnoredLeftovers(result.newState)
+        assertEquals(
+            listOf("tests/basement/test_basement_a.gd", "tests/test_sock_sale.gd", "tests/test_walk.gd"),
+            leftovers,
+        )
+
+        // "Quitar lo ignorado": se aparta, no se borra.
+        val moved = engine().moveIgnoredLeftovers(result.newState, leftovers)
+        assertEquals(leftovers, moved.conflicts.map { it.path })
+        assertTrue(moved.conflicts.all { it.reason == ConflictReason.IGNORED })
+        assertFalse(File(dir, "tests").exists(), "y la carpeta vacia se quita")
+        assertEquals("var s := SockSale.new()\n", conflictCopies()["test_sock_sale.gd"])
+        assertEquals("var b := Basement.new()\n", conflictCopies()["test_basement_a.gd"])
+        assertTrue(engine().findIgnoredLeftovers(result.newState).isEmpty())
+        assertTrue(engine().pull(repo, "main", dir, result.newState).fastPath)
+    }
+
+    @Test fun movingLeftoversOnlyTouchesWhatIsStillIgnoredAndUnknown() = runBlocking {
+        val state = pullThenIgnoreTests()
+        val synced = engine().pull(repo, "main", dir, state).newState
+        File(dir, "tests").mkdirs()
+        File(dir, "tests/mio.gd").writeText("mio\n")
+        val moved = engine().moveIgnoredLeftovers(synced, listOf("tests/mio.gd", "game/scripts/a.gd", "../fuera.txt"))
+        assertEquals(listOf("tests/mio.gd"), moved.conflicts.map { it.path })
+        assertTrue(File(dir, "game/scripts/a.gd").isFile, "lo que no esta ignorado no se mueve")
     }
 
     @Test fun ignoredFilesDoNotCountForTheFirstSync() = runBlocking {

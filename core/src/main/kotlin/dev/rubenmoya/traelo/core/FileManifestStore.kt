@@ -27,6 +27,7 @@ class FileManifestStore(private val dir: File) : ManifestStore {
                 files = result,
                 head = json.optString("head", "").ifEmpty { null },
                 branch = json.optString("branch", "").ifEmpty { null },
+                ignore = if (json.has("ignore")) json.getString("ignore") else null,
             )
         } catch (e: Exception) {
             // Si el manifiesto esta roto se empieza de cero: el motor vuelve a comparar con el disco.
@@ -40,6 +41,7 @@ class FileManifestStore(private val dir: File) : ManifestStore {
         val json = JSONObject().put("files", JSONObject(manifest.files))
         manifest.head?.let { json.put("head", it) }
         manifest.branch?.let { json.put("branch", it) }
+        manifest.ignore?.let { json.put("ignore", it) }
         val target = fileFor(repo)
         val temp = File(dir, "${repo.key}.json.tmp")
         FileOutputStream(temp).use { out ->

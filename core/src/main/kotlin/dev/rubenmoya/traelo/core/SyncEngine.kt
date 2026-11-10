@@ -37,8 +37,9 @@ import kotlinx.coroutines.withContext
  * Motor de sincronizacion. De GitHub a una carpeta, nunca al reves: no hay push ni commits.
  *
  * Reglas que no se rompen:
- * - Solo se borran archivos que el propio motor trajo antes (estan en el manifiesto) y que ya no
- *   estan en la rama. Lo demas de la carpeta (por ejemplo la cache `.godot`) no se toca jamas.
+ * - Solo se borran archivos que el propio motor trajo antes (estan en el manifiesto con su huella)
+ *   y que ya no estan en la rama o que ahora ignora el `.traeloignore`. Lo demas de la carpeta no
+ *   se borra nunca, y la cache `.godot` no se toca jamas.
  * - Nada del movil se pierde en silencio: si un archivo que hay que pisar o quitar se cambio en el
  *   movil (o no lo trajo Traelo), primero se mueve a la carpeta de conflictos, fuera del proyecto.
  * - Cada archivo se baja a un temporal, se comprueba su huella mientras se escribe y solo entonces
@@ -47,7 +48,9 @@ import kotlinx.coroutines.withContext
  * - Una sola sincronizacion por repo a la vez; la siguiente espera su turno.
  * - El manifiesto (commit, rama y archivos) se guarda de una vez y solo al acabar bien. Si algo
  *   se corta, la siguiente vuelta compara huellas y retoma sin bajar otra vez lo que ya llego.
- * - Lo que el `.traeloignore` del repo ignora no se baja ni se gestiona, pero tampoco se borra.
+ * - Lo que el `.traeloignore` del repo ignora no se baja. Si Traelo lo trajo antes y sigue intacto,
+ *   se quita; si se toco en el movil, se aparta. Lo ignorado sin huella conocida (estados de
+ *   versiones viejas, archivos del usuario) solo se cuenta: se aparta si la persona lo pide.
  *
  * [onProgress] y [onConflict] se llaman desde varios hilos: tienen que aguantarlo.
  */
@@ -87,8 +90,8 @@ class SyncEngine(
                 return@withContext CheckResult.UpToDate(head)
             }
             val view = remoteView(repo, head)
-            val managed = view.managed(manifests.load(repo).files)
-            val plan = SyncPlanner.plan(view.entries, managed, state.localFile(), verifyAll = false, hashParallelism)
+            val known = knownFiles(manifests.load(repo))
+            val plan = SyncPlanner.plan(view.entries, known, state.localFile(), verifyAll = false, hashParallelism)
             val commits = try {
                 api.commitsBetween(repo, state.headSha, head)
             } catch (e: GitHubException.NotFound) {
@@ -136,7 +139,9 @@ class SyncEngine(
         val newState = { SyncState(repo, branch, head, clock(), localDir.absolutePath) }
 
         // Salida rapida: la rama no cambio y todo lo traido sigue en su sitio. Ni se pide el arbol.
-        if (!verifyLocal && manifest.head == head && manifest.branch == branch && allPresent(localDir, manifest.files)) {
+        // Un manifiesto antiguo (sin el `.traeloignore` apuntado) mira el arbol una vez.
+        val fast = manifest.head == head && manifest.branch == branch && manifest.ignore != null
+        if (!verifyLocal && fast && allPresent(localDir, manifest.files)) {
             return PullResult(newState(), downloaded = 0, removed = 0, skipped = emptyList(), fastPath = true)
         }
 
@@ -146,11 +151,13 @@ class SyncEngine(
         }
         val root = localDir.canonicalFile
         progress.phase(SyncPhase.COMPARING)
-        val plan = SyncPlanner.plan(view.entries, view.managed(manifest.files), root, verifyLocal, hashParallelism)
+        val plan = SyncPlanner.plan(view.entries, knownFiles(manifest), root, verifyLocal, hashParallelism)
         val conflicts = ConflictSession(File(conflictDirFor(localDir.absoluteFile), stamp(clock())), onConflict)
         val network = AtomicLong()
 
-        removeFiles(plan.remove, root, conflicts, progress)
+        removeFiles(plan.remove, root, conflicts, progress) { path ->
+            if (view.rules.ignores(path)) ConflictReason.IGNORED else ConflictReason.REMOVED_UPSTREAM
+        }
         var pending = plan.download
         if (pending.isNotEmpty() && zipPolicy.useZip(pending.size, plan.downloadBytes, view.allBytes)) {
             pending = fetchFromZip(repo, head, root, pending, view.allBytes, conflicts, progress, network)
@@ -161,7 +168,7 @@ class SyncEngine(
         val unsafe = plan.unsafe.toHashSet()
         val finalFiles = HashMap<String, String>(view.entries.size * 2)
         for (entry in view.entries) if (entry.path !in unsafe) finalFiles[entry.path] = entry.sha
-        manifests.save(repo, Manifest(finalFiles, head, branch))
+        manifests.save(repo, Manifest(finalFiles, head, branch, view.ignoreText))
 
         val saved = conflicts.saved.toList().sortedBy { it.path }
         return PullResult(
@@ -192,6 +199,63 @@ class SyncEngine(
             LocalChanges(modified, missing)
         }
 
+    /**
+     * Archivos que el `.traeloignore` ignora y siguen en el movil sin que Traelo sepa su huella:
+     * restos de versiones viejas (que no la guardaban) o cosas creadas en el movil. No se borran
+     * solos; [moveIgnoredLeftovers] los aparta si la persona lo pide. Nunca mira dentro de `.godot`.
+     * Usa las reglas de la ultima sincronizacion, sin red.
+     */
+    suspend fun findIgnoredLeftovers(state: SyncState): List<String> =
+        withContext(Dispatchers.IO) { ignoredLeftovers(state.localFile(), manifests.load(state.repo)) }
+
+    /**
+     * "Quitar lo ignorado": mueve a la carpeta de conflictos los [paths] que sigan siendo restos
+     * ignorados (lo demas no se toca) y quita las carpetas que se queden vacias. No borra nada.
+     */
+    suspend fun moveIgnoredLeftovers(
+        state: SyncState,
+        paths: Collection<String>,
+        onConflict: (ConflictFile) -> Unit = {},
+    ): MovedAside = lockFor(state.repo).withLock {
+        withContext(Dispatchers.IO) {
+            val localDir = state.localFile()
+            val still = ignoredLeftovers(localDir, manifests.load(state.repo)).toHashSet()
+            val root = localDir.canonicalFile
+            val conflicts = ConflictSession(File(conflictDirFor(localDir.absoluteFile), stamp(clock())), onConflict)
+            for (path in paths.distinct().sorted()) {
+                if (path !in still) continue
+                val file = SafePaths.resolveUnder(root, path) ?: continue
+                if (!file.isFile) continue
+                conflicts.keep(file, path, ConflictReason.IGNORED)
+                pruneEmptyDirs(file.parentFile, root)
+            }
+            val saved = conflicts.saved.toList().sortedBy { it.path }
+            MovedAside(saved, if (saved.isEmpty()) null else conflicts.dir.absolutePath)
+        }
+    }
+
+    private fun ignoredLeftovers(localDir: File, manifest: Manifest): List<String> {
+        val text = manifest.ignore ?: return emptyList()
+        val rules = IgnoreRules.parse(text)
+        if (rules.isEmpty || !localDir.isDirectory) return emptyList()
+        val known = knownFiles(manifest)
+        val out = ArrayList<String>()
+        fun visit(dir: File, prefix: String) {
+            val children = dir.listFiles() ?: return
+            for (child in children) {
+                if (Files.isSymbolicLink(child.toPath())) continue
+                val relative = prefix + child.name
+                if (child.isDirectory) {
+                    if (child.name != SafePaths.GODOT_DIR && child.name != ".git") visit(child, "$relative/")
+                } else if (child.isFile && rules.ignores(relative) && relative !in known) {
+                    out += relative
+                }
+            }
+        }
+        visit(localDir, "")
+        return out.sorted()
+    }
+
     // ------------------------------------------------------------------ arbol remoto
 
     /** La rama tal como la gestiona Traelo: el arbol menos lo que ignora el `.traeloignore`. */
@@ -199,14 +263,19 @@ class SyncEngine(
         val entries: List<TreeEntry>,
         val skipped: List<String>,
         val rules: IgnoreRules,
+        /** El `.traeloignore` tal cual ("" si no hay): se apunta en el manifiesto. */
+        val ignoreText: String,
         val ignored: Int,
         /** Lo que pesa la rama entera, ignorados incluidos: es lo que trae el zip. */
         val allBytes: Long,
-    ) {
-        /** El manifiesto sin lo ignorado: eso deja de gestionarse, y por tanto nunca se borra. */
-        fun managed(manifest: Map<String, String>): Map<String, String> =
-            if (rules.isEmpty) manifest else manifest.filterKeys { !rules.ignores(it) }
-    }
+    )
+
+    /**
+     * Lo traido con huella conocida. Lo ignorado tambien cuenta: como no esta en la rama que se
+     * gestiona, el plan lo quita (si sigue intacto) o lo aparta (si se toco en el movil).
+     */
+    private fun knownFiles(manifest: Manifest): Map<String, String> =
+        if (manifest.files.values.all { it.isNotBlank() }) manifest.files else manifest.files.filterValues { it.isNotBlank() }
 
     /** El arbol de un commit no cambia nunca, asi que se guarda un rato (comprobar y luego traer). */
     private fun remoteView(repo: RepoRef, head: String): RemoteView {
@@ -214,24 +283,25 @@ class SyncEngine(
         synchronized(views) { views[key] }?.let { return it }
         val tree = api.tree(repo, head)
         if (tree.truncated) throw GitHubException.TooBig()
-        val rules = loadIgnoreRules(repo, tree.entries)
+        val text = loadIgnoreText(repo, tree.entries)
+        val rules = IgnoreRules.parse(text)
         val allBytes = tree.entries.sumOf { it.size }
         val view = if (rules.isEmpty) {
-            RemoteView(tree.entries, tree.skipped, rules, 0, allBytes)
+            RemoteView(tree.entries, tree.skipped, rules, text, 0, allBytes)
         } else {
             val kept = tree.entries.filter { !rules.ignores(it.path) }
-            RemoteView(kept, tree.skipped, rules, tree.entries.size - kept.size, allBytes)
+            RemoteView(kept, tree.skipped, rules, text, tree.entries.size - kept.size, allBytes)
         }
         synchronized(views) { views[key] = view }
         return view
     }
 
-    private fun loadIgnoreRules(repo: RepoRef, entries: List<TreeEntry>): IgnoreRules {
-        val entry = entries.firstOrNull { it.path == IgnoreRules.FILE_NAME } ?: return IgnoreRules.NONE
-        if (entry.size > MAX_IGNORE_BYTES) return IgnoreRules.NONE
+    private fun loadIgnoreText(repo: RepoRef, entries: List<TreeEntry>): String {
+        val entry = entries.firstOrNull { it.path == IgnoreRules.FILE_NAME } ?: return ""
+        if (entry.size > MAX_IGNORE_BYTES) return ""
         val out = ByteArrayOutputStream()
         api.downloadBlob(repo, entry.sha, out)
-        return IgnoreRules.parse(out.toString(Charsets.UTF_8.name()))
+        return out.toString(Charsets.UTF_8.name())
     }
 
     private fun allPresent(localDir: File, files: Map<String, String>): Boolean =
@@ -283,6 +353,7 @@ class SyncEngine(
         root: File,
         conflicts: ConflictSession,
         progress: ProgressTracker,
+        reasonFor: (String) -> ConflictReason,
     ) {
         if (removals.isEmpty()) return
         progress.phase(SyncPhase.REMOVING, total = removals.size)
@@ -290,17 +361,18 @@ class SyncEngine(
             currentCoroutineContext().ensureActive()
             val file = SafePaths.resolveUnder(root, removal.path)
             if (file != null && file.isFile) {
-                if (removal.conflict) conflicts.keep(file, removal.path, ConflictReason.REMOVED_UPSTREAM) else file.delete()
+                if (removal.conflict) conflicts.keep(file, removal.path, reasonFor(removal.path)) else file.delete()
                 pruneEmptyDirs(file.parentFile, root)
             }
             progress.fileDone(removal.path)
         }
     }
 
-    /** Quita carpetas que se quedaron vacias, sin salir de [root] y sin tocar nada que no este vacio. */
+    /** Quita carpetas que se quedaron vacias, sin salir de [root], sin tocar nada que no este vacio ni `.godot`. */
     private fun pruneEmptyDirs(start: File?, root: File) {
         var dir = start
         while (dir != null && dir != root && dir.path.startsWith(root.path + File.separator)) {
+            if (dir.name == SafePaths.GODOT_DIR) return
             if (dir.list()?.isEmpty() != true) return
             dir.delete()
             dir = dir.parentFile

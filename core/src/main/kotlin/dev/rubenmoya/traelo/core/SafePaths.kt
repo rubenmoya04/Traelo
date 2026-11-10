@@ -4,6 +4,12 @@ import java.io.File
 
 /** Convierte rutas que vienen de fuera (GitHub, zips) en archivos dentro de una carpeta, o rechaza. */
 object SafePaths {
+    /** Cache de Godot: Traelo no borra ni mueve nada de aqui dentro. */
+    const val GODOT_DIR = ".godot"
+
+    /** true si [relative] es la carpeta `.godot` de la raiz o algo dentro de ella. */
+    fun isGodotCache(relative: String): Boolean = relative == GODOT_DIR || relative.startsWith("$GODOT_DIR/")
+
     /**
      * Devuelve el archivo para [relative] dentro de [root], o null si la ruta es peligrosa:
      * absoluta, con "..", con barras invertidas, vacia, con ".git" o que acabe fuera de [root]

@@ -15,7 +15,10 @@ enum class PlanKind { ADDED, MODIFIED, RESTORED }
  */
 data class PlannedFile(val entry: TreeEntry, val kind: PlanKind, val conflict: Boolean = false)
 
-/** Un archivo traido antes que ya no esta en la rama. Con [conflict] se guarda aparte en vez de borrarlo. */
+/**
+ * Un archivo traido antes que ya no esta en la rama (o que ahora se ignora). Con [conflict] se
+ * guarda aparte en vez de borrarlo.
+ */
 data class PlannedRemoval(val path: String, val conflict: Boolean = false)
 
 data class SyncPlan(
@@ -70,7 +73,8 @@ object SyncPlanner {
             items += Item(entry, file, manifest[entry.path], file.isFile)
         }
         val remotePaths = remote.mapTo(HashSet(remote.size * 2)) { it.path }
-        val gone = manifest.keys.filter { it !in remotePaths }.sorted()
+        // Lo de `.godot` no se quita nunca, aunque lo hubiera traido Traelo.
+        val gone = manifest.keys.filter { it !in remotePaths && !SafePaths.isGodotCache(it) }.sorted()
 
         // Huellas que hacen falta: lo que existe y no se puede dar por bueno sin mirar.
         val toHash = ArrayList<File>()

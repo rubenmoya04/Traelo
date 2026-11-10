@@ -89,7 +89,13 @@ enum class ConflictReason {
 
     /** "Restaurar": se repone lo de GitHub y lo del movil se guarda por si acaso. */
     RESTORED,
+
+    /** Ahora lo ignora el `.traeloignore`: se cambio en el movil o se aparto con "Quitar lo ignorado". */
+    IGNORED,
 }
+
+/** Lo que se aparto con "Quitar lo ignorado" y donde quedo ([conflictDir] es null si no se movio nada). */
+data class MovedAside(val conflicts: List<ConflictFile>, val conflictDir: String?)
 
 /** Un archivo del movil que se movio a la carpeta de conflictos en vez de perderse. */
 data class ConflictFile(val path: String, val savedAs: String, val reason: ConflictReason)
@@ -136,9 +142,15 @@ data class LocalChanges(val modified: List<String>, val missing: List<String>) {
 
 /**
  * Lo que se trajo de un repo, todo junto para guardarlo de una vez: commit, rama y la lista
- * ruta -> huella. [head] es null en manifiestos antiguos.
+ * ruta -> huella. [head] es null en manifiestos antiguos. [ignore] es el `.traeloignore` con el
+ * que se sincronizo ("" si no habia) y null en manifiestos de antes de la 0.5.1.
  */
-data class Manifest(val files: Map<String, String>, val head: String? = null, val branch: String? = null) {
+data class Manifest(
+    val files: Map<String, String>,
+    val head: String? = null,
+    val branch: String? = null,
+    val ignore: String? = null,
+) {
     companion object {
         val EMPTY = Manifest(emptyMap())
     }

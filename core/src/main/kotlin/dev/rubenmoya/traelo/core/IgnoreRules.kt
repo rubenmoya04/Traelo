@@ -10,8 +10,8 @@ package dev.rubenmoya.traelo.core
  *   cualquier profundidad (por ejemplo, la carpeta docs seguida de asterisco punto pdf).
  * - Cualquier otra cosa es una ruta exacta desde la raiz.
  *
- * Lo ignorado no se baja y deja de estar gestionado, pero nunca se borra del movil: si ya estaba,
- * se queda donde esta.
+ * Lo ignorado no se baja. Si Traelo lo habia traido antes, al sincronizar se quita del movil
+ * (o se aparta si se cambio alli). Lo que Traelo no trajo nunca se borra.
  */
 class IgnoreRules private constructor(private val rules: List<Regex>) {
     fun ignores(path: String): Boolean = path != FILE_NAME && rules.any { it.matches(path) }
