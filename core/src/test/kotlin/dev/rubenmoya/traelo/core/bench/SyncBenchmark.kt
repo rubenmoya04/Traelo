@@ -5,6 +5,7 @@ import dev.rubenmoya.traelo.core.CommitInfo
 import dev.rubenmoya.traelo.core.GitBlobHash
 import dev.rubenmoya.traelo.core.GitHubApi
 import dev.rubenmoya.traelo.core.GitHubException
+import dev.rubenmoya.traelo.core.Manifest
 import dev.rubenmoya.traelo.core.ManifestStore
 import dev.rubenmoya.traelo.core.RemoteRepo
 import dev.rubenmoya.traelo.core.RepoRef
@@ -12,8 +13,12 @@ import dev.rubenmoya.traelo.core.SyncEngine
 import dev.rubenmoya.traelo.core.SyncState
 import dev.rubenmoya.traelo.core.TreeEntry
 import dev.rubenmoya.traelo.core.TreeResult
+import dev.rubenmoya.traelo.core.ZipPolicy
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
@@ -99,6 +104,7 @@ class SlowGitHubApi(private val net: SimulatedNetwork) : GitHubApi {
             TreeEntry(path, hash, data.size.toLong())
         }
         heads[branch] = sha
+        zipOf(sha) // fuera de la medicion: generar el zip no es tiempo de red
         return sha
     }
 
@@ -144,21 +150,21 @@ class SlowGitHubApi(private val net: SimulatedNetwork) : GitHubApi {
         }
     }
 
-    override fun downloadZip(repo: RepoRef, ref: String, dest: File) {
-        dest.outputStream().use { streamZip(ref, it) }
-    }
-
-    /** Manda el zip a trozos, como lo haria codeload. */
-    fun streamZip(ref: String, out: OutputStream) {
+    override fun <T> openZip(repo: RepoRef, ref: String, read: (InputStream) -> T): T {
         val data = zipOf(ref)
         net.request()
         if (net.zipStartMs > 0) Thread.sleep(net.zipStartMs)
-        var offset = 0
-        while (offset < data.size) {
-            val n = minOf(CHUNK, data.size - offset)
-            net.transfer(n.toLong())
-            out.write(data, offset, n)
-            offset += n
+        return ThrottledStream(data, net).use(read)
+    }
+
+    /** El zip llega a trozos al ritmo de la red simulada. */
+    private class ThrottledStream(data: ByteArray, private val net: SimulatedNetwork) : FilterInputStream(ByteArrayInputStream(data)) {
+        override fun read(): Int = super.read().also { if (it >= 0) net.transfer(1) }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val n = super.read(b, off, minOf(len, CHUNK))
+            if (n > 0) net.transfer(n.toLong())
+            return n
         }
     }
 
@@ -167,18 +173,18 @@ class SlowGitHubApi(private val net: SimulatedNetwork) : GitHubApi {
         return emptyList()
     }
 
-    private companion object {
+    companion object {
         const val CHUNK = 64 * 1024
     }
 }
 
 class MemoryStore : ManifestStore {
-    private val data = HashMap<String, Map<String, String>>()
+    private val data = HashMap<String, Manifest>()
 
-    override fun load(repo: RepoRef) = data[repo.key] ?: emptyMap()
+    override fun load(repo: RepoRef) = data[repo.key] ?: Manifest.EMPTY
 
-    override fun save(repo: RepoRef, files: Map<String, String>) {
-        data[repo.key] = HashMap(files)
+    override fun save(repo: RepoRef, manifest: Manifest) {
+        data[repo.key] = manifest
     }
 
     override fun clear(repo: RepoRef) {
@@ -252,7 +258,8 @@ fun main(args: Array<String>) {
         val next = LinkedHashMap(source.files)
         val imports = next.keys.filter { it.endsWith(".import") }.take(count * 2 / 3)
         val pngs = next.keys.filter { it.endsWith(".png") }.take(count - imports.size)
-        for (path in imports + pngs) next[path] = next.getValue(path) + random.nextBytes(16)
+        val rest = next.keys.filter { it !in imports && it !in pngs }.take(count - imports.size - pngs.size)
+        for (path in imports + pngs + rest) next[path] = next.getValue(path) + random.nextBytes(16)
         return next
     }
 
@@ -269,6 +276,41 @@ fun main(args: Array<String>) {
         val (api, store, state) = prepared("local")
         measure("buscar cambios locales", api) {
             runBlocking { SyncEngine(api, store).findLocalChanges(state) }
+        }
+    }
+
+    // Umbral zip contra archivos sueltos: la misma tanda forzando cada camino.
+    if ("crossover" in args) {
+        println("Cruce zip contra archivos sueltos:")
+        for (count in listOf(150, 600, 1200, 2000)) {
+            for ((label, policy) in listOf("sueltos" to ZipPolicy.NEVER, "zip" to ZipPolicy.atLeast(1))) {
+                val (api, store, state) = prepared("x$count$label")
+                api.commit("main", changed(count))
+                measure("$count cambios, $label", api) {
+                    runBlocking { SyncEngine(api, store, policy).pull(repo, "main", File(state.localDir), state) }
+                }
+            }
+        }
+        for ((label, policy) in listOf("sueltos" to ZipPolicy.NEVER, "zip" to ZipPolicy.atLeast(1))) {
+            val api = SlowGitHubApi(net)
+            api.commit("main", source.files)
+            measure("primera descarga, $label", api) {
+                runBlocking { SyncEngine(api, MemoryStore(), policy).pull(repo, "main", File(root, "xfirst$label"), null) }
+            }
+        }
+    }
+
+    // Cuantas descargas a la vez.
+    if ("parallel" in args) {
+        println("Concurrencia (600 cambios sueltos):")
+        for (parallel in listOf(8, 16, 24, 32)) {
+            val (api, store, state) = prepared("p$parallel")
+            api.commit("main", changed(600))
+            measure("600 cambios, $parallel a la vez", api) {
+                runBlocking {
+                    SyncEngine(api, store, ZipPolicy.NEVER, parallelism = parallel).pull(repo, "main", File(state.localDir), state)
+                }
+            }
         }
     }
 
