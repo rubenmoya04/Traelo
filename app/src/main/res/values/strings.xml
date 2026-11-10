@@ -50,6 +50,7 @@
     <string name="search_hint">Buscar repo</string>
     <string name="search_clear">Borrar búsqueda</string>
     <string name="repos_loading">Cargando tus repos…</string>
+    <string name="repos_cached">Lista guardada. Actualizando…</string>
     <string name="repos_empty_title">No veo ningún repo</string>
     <string name="repos_empty_body">Tu token solo ve los repos que elegiste al crearlo. Edítalo en GitHub para añadir repos y desliza hacia abajo para recargar.</string>
     <string name="repos_no_results_title">Sin resultados</string>
@@ -94,6 +95,10 @@
         <item quantity="other">%d borrados</item>
     </plurals>
     <string name="counts_none">Hay una versión nueva, pero ningún archivo cambia.</string>
+    <plurals name="counts_conflicts">
+        <item quantity="one">Ojo: %d archivo que cambiaste en el móvil se guardará aparte antes de traer.</item>
+        <item quantity="other">Ojo: %d archivos que cambiaste en el móvil se guardarán aparte antes de traer.</item>
+    </plurals>
 
     <!-- Pantalla de un repo -->
     <string name="branch_label">Rama</string>
@@ -108,6 +113,8 @@
     <string name="action_pull_branch">Cambiar a %1$s y traer</string>
     <string name="action_open_godot">Abrir en Godot</string>
     <string name="action_cancel">Cancelar descarga</string>
+    <string name="action_pull_open">Traer y abrir en Godot</string>
+    <string name="action_open_anyway">Abrir en Godot igualmente</string>
     <string name="project_not_found">No encuentro ningún project.godot en este repo (miré hasta 3 carpetas de profundidad). Godot se abrirá sin proyecto.</string>
     <string name="project_multiple">Hay %1$d proyectos de Godot en este repo. Abro el menos profundo: %2$s</string>
     <string name="project_in_subfolder">El proyecto de Godot está en la subcarpeta %1$s.</string>
@@ -119,12 +126,20 @@
 
     <!-- Progreso y resultado -->
     <string name="progress_preparing">Preparando…</string>
-    <string name="progress_zip">Bajando el proyecto</string>
-    <string name="progress_extracting">Colocando %1$d de %2$d archivos</string>
-    <string name="progress_extracting_unknown">Colocando archivos</string>
+    <string name="progress_waiting">Esperando a que acabe la otra descarga de este repo…</string>
+    <string name="progress_comparing">Comparando con lo que tienes en el móvil…</string>
+    <string name="progress_zip">Bajando el proyecto entero de una vez</string>
+    <string name="progress_zip_files">Colocando %1$d de %2$d archivos</string>
     <plurals name="progress_files">
         <item quantity="one">Bajando %1$d de %2$d archivo</item>
         <item quantity="other">Bajando %1$d de %2$d archivos</item>
+    </plurals>
+    <string name="progress_bytes">%1$s de %2$s MB</string>
+    <string name="progress_speed">%1$s MB/s</string>
+    <string name="progress_eta_seconds">quedan %1$d s</string>
+    <plurals name="progress_eta_minutes">
+        <item quantity="one">queda %d min</item>
+        <item quantity="other">quedan %d min</item>
     </plurals>
     <string name="progress_removing">Borrando lo que ya no está en GitHub</string>
     <string name="progress_saving">Guardando</string>
@@ -148,6 +163,25 @@
         <item quantity="one">%d no se trae (enlace simbólico o submódulo).</item>
         <item quantity="other">%d no se traen (enlaces simbólicos o submódulos).</item>
     </plurals>
+    <plurals name="notice_size">
+        <item quantity="one">%1$s MB en %2$d segundo.</item>
+        <item quantity="other">%1$s MB en %2$d segundos.</item>
+    </plurals>
+
+    <!-- Conflictos: archivos del movil guardados aparte -->
+    <plurals name="conflicts_title">
+        <item quantity="one">%d archivo tuyo guardado aparte</item>
+        <item quantity="other">%d archivos tuyos guardados aparte</item>
+    </plurals>
+    <string name="conflicts_body">Los habías cambiado en el móvil y en GitHub también cambiaron (o se borraron). Ahora tienes la versión de GitHub. La tuya no se ha perdido, está en:</string>
+    <string name="conflicts_godot_waiting">No he abierto Godot todavía para que veas esto antes.</string>
+    <string name="conflicts_dismiss">Entendido</string>
+    <string name="conflict_reason_changed">cambiado en los dos sitios</string>
+    <string name="conflict_reason_removed">borrado en GitHub</string>
+    <string name="conflict_reason_untracked">ya había uno tuyo ahí</string>
+    <string name="conflict_reason_restored">restaurado</string>
+    <string name="conflict_line">%1$s (%2$s)</string>
+
     <string name="leave_title">¿Cancelar la descarga?</string>
     <string name="leave_body">Si sales ahora, la descarga se corta. Puedes volver a traer cuando quieras.</string>
     <string name="leave_confirm">Cancelar y salir</string>
@@ -196,7 +230,7 @@
         <item quantity="other">%d archivos no coinciden</item>
     </plurals>
     <string name="restore_body">%1$d cambiados en el móvil y %2$d que faltan.</string>
-    <string name="restore_warning">Si sigues, se vuelven a bajar desde GitHub y se pierde lo que hayas cambiado en ellos.</string>
+    <string name="restore_warning">Si sigues, se vuelven a bajar desde GitHub. Antes guardo lo que cambiaste en una carpeta aparte, fuera del proyecto, por si lo necesitas.</string>
     <string name="restore_confirm">Restaurar</string>
 
     <!-- Ajustes -->

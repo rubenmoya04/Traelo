@@ -38,4 +38,19 @@ class FormattingTest {
     fun baseDirNormalization() {
         assertEquals("/storage/emulated/0/Documents/Traelo", normalizeBaseDir(" /storage/emulated/0/Documents/Traelo/ "))
     }
+
+    @Test
+    fun megabytesUseTheLocaleDecimal() {
+        assertEquals("12,5", formatMegabytes(13_107_200, es))
+        assertEquals("0.0", formatMegabytes(-5, Locale.US))
+    }
+
+    @Test
+    fun etaIsRoundedSoItDoesNotJump() {
+        assertEquals(Eta.Seconds(5), etaOf(0))
+        assertEquals(Eta.Seconds(5), etaOf(3))
+        assertEquals(Eta.Seconds(25), etaOf(21))
+        assertEquals(Eta.Minutes(1), etaOf(60))
+        assertEquals(Eta.Minutes(3), etaOf(121))
+    }
 }

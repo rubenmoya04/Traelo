@@ -61,3 +61,21 @@ fun normalizeBaseDir(text: String): String {
     val clean = text.trim().trimEnd('/')
     return if (clean.isEmpty()) "/" else File(clean).path
 }
+
+/** Megas con un decimal ("12,3" en español) para el progreso. */
+fun formatMegabytes(bytes: Long, locale: Locale = Locale.getDefault()): String =
+    String.format(locale, "%.1f", bytes.coerceAtLeast(0) / (1024.0 * 1024.0))
+
+/** Tiempo restante redondeado para que no baile: segundos de 5 en 5 hasta el minuto, luego minutos. */
+sealed interface Eta {
+    data class Seconds(val value: Int) : Eta
+
+    data class Minutes(val value: Int) : Eta
+}
+
+fun etaOf(seconds: Long): Eta =
+    if (seconds < 60) {
+        Eta.Seconds((((seconds.coerceAtLeast(1) + 4) / 5) * 5).toInt().coerceAtMost(60))
+    } else {
+        Eta.Minutes(((seconds + 59) / 60).toInt())
+    }

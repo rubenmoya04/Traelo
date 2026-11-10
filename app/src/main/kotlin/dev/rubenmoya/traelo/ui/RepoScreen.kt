@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -48,10 +49,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.rubenmoya.traelo.R
 import dev.rubenmoya.traelo.core.CheckResult
+import dev.rubenmoya.traelo.core.ConflictFile
+import dev.rubenmoya.traelo.core.ConflictReason
 import dev.rubenmoya.traelo.core.LocalChanges
 import dev.rubenmoya.traelo.core.PlanCounts
 import dev.rubenmoya.traelo.core.SyncPhase
@@ -61,6 +65,9 @@ import dev.rubenmoya.traelo.core.SyncProgress
 class RepoActions(
     val back: () -> Unit,
     val pull: () -> Unit,
+    val pullAndOpen: () -> Unit,
+    val openAfterConflicts: () -> Unit,
+    val dismissConflicts: () -> Unit,
     val check: () -> Unit,
     val cancel: () -> Unit,
     val selectBranch: (String) -> Unit,
@@ -77,6 +84,7 @@ class RepoActions(
 )
 
 private const val MAX_COMMITS = 20
+private const val MAX_CONFLICTS_SHOWN = 6
 
 /** Lo que se ve en la tarjeta grande: una sola idea, "¿estoy al dia?". */
 private fun displayStatus(d: DetailState): RepoStatus = when {
@@ -163,6 +171,9 @@ fun RepoScreen(
                 ProgressCard(detail.sync as SyncUi.Running, actions.cancel)
             } else {
                 PrimaryActions(detail, actions)
+            }
+            if (detail.conflicts.isNotEmpty()) {
+                ConflictsCard(detail, actions)
             }
             detail.notice?.let { if (!running) NoticeCard(it) }
             if (detail.check is CheckResult.Outdated && !running) {
@@ -374,7 +385,12 @@ private fun statusBody(detail: DetailState, status: RepoStatus): String = when (
     is RepoStatus.Outdated -> {
         val check = detail.check as? CheckResult.Outdated
         val counts = check?.counts
-        if (counts != null) countsText(counts) else ""
+        when {
+            counts == null -> ""
+            counts.conflicts > 0 -> countsText(counts) + "\n" +
+                pluralStringResource(R.plurals.counts_conflicts, counts.conflicts, counts.conflicts)
+            else -> countsText(counts)
+        }
     }
 
     RepoStatus.NotSynced -> {
@@ -407,9 +423,15 @@ private fun countsText(counts: PlanCounts): String {
 private fun PrimaryActions(detail: DetailState, actions: RepoActions) {
     val saved = detail.saved
     val branchChanged = saved != null && detail.branch != saved.branch
-    val upToDate = detail.check is CheckResult.UpToDate && !branchChanged
     val busy = detail.checking || detail.findingLocal
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Lo normal: un toque y a probar el juego. Si ya esta al dia, solo pregunta y abre.
+        BigButton(
+            text = stringResource(R.string.action_pull_open),
+            onClick = actions.pullAndOpen,
+            enabled = !busy,
+            height = 68.dp,
+        )
         BigButton(
             text = when {
                 saved == null -> stringResource(R.string.action_pull_first)
@@ -418,17 +440,17 @@ private fun PrimaryActions(detail: DetailState, actions: RepoActions) {
             },
             onClick = actions.pull,
             enabled = !busy,
-            tonal = upToDate,
-            height = 68.dp,
+            tonal = true,
+            height = 56.dp,
         )
-        BigButton(
-            text = stringResource(R.string.action_open_godot),
-            onClick = actions.openGodot,
-            enabled = saved != null,
-            tonal = !upToDate,
-            outlined = upToDate,
-            height = 60.dp,
-        )
+        if (saved != null) {
+            BigButton(
+                text = stringResource(R.string.action_open_godot),
+                onClick = actions.openGodot,
+                outlined = true,
+                height = 56.dp,
+            )
+        }
         projectNote(detail)?.let {
             Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -460,13 +482,29 @@ private fun ProgressCard(running: SyncUi.Running, onCancel: () -> Unit) {
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
-        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(progressLabel(progress), style = MaterialTheme.typography.titleMedium)
             val fraction = progressFraction(progress)
             if (fraction != null) {
                 LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().height(10.dp))
             } else {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(10.dp))
+            }
+            if (progress != null && progress.bytesTotal > 0) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(
+                            R.string.progress_bytes,
+                            formatMegabytes(progress.bytesDone),
+                            formatMegabytes(progress.bytesTotal),
+                        ),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    speedAndEta(progress)?.let {
+                        Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             }
             progress?.path?.let {
                 Text(
@@ -487,22 +525,41 @@ private fun ProgressCard(running: SyncUi.Running, onCancel: () -> Unit) {
     }
 }
 
-/** Fraccion de 0 a 1 si se sabe cuanto falta; null si no (barra indeterminada). */
+/** Fraccion de 0 a 1 si se sabe cuanto falta (por bytes, o por archivos); null si no (barra indeterminada). */
 private fun progressFraction(progress: SyncProgress?): Float? {
-    if (progress == null || progress.total <= 0) return null
-    val countable = progress.phase == SyncPhase.DOWNLOADING_FILES || progress.phase == SyncPhase.EXTRACTING
-    return if (countable) (progress.done.toFloat() / progress.total).coerceIn(0f, 1f) else null
+    if (progress == null) return null
+    val countable = progress.phase == SyncPhase.DOWNLOADING_FILES || progress.phase == SyncPhase.DOWNLOADING_ZIP
+    if (!countable) return null
+    return when {
+        progress.bytesTotal > 0 -> (progress.bytesDone.toFloat() / progress.bytesTotal).coerceIn(0f, 1f)
+        progress.total > 0 -> (progress.done.toFloat() / progress.total).coerceIn(0f, 1f)
+        else -> null
+    }
+}
+
+@Composable
+private fun speedAndEta(progress: SyncProgress): String? {
+    if (progress.bytesPerSecond <= 0) return null
+    val speed = stringResource(R.string.progress_speed, formatMegabytes(progress.bytesPerSecond))
+    val eta = progress.etaSeconds?.let { seconds ->
+        when (val e = etaOf(seconds)) {
+            is Eta.Seconds -> stringResource(R.string.progress_eta_seconds, e.value)
+            is Eta.Minutes -> pluralStringResource(R.plurals.progress_eta_minutes, e.value, e.value)
+        }
+    }
+    return if (eta == null) speed else "$speed · $eta"
 }
 
 @Composable
 private fun progressLabel(progress: SyncProgress?): String = when (progress?.phase) {
     null, SyncPhase.CHECKING -> stringResource(R.string.progress_preparing)
-    SyncPhase.DOWNLOADING_ZIP -> stringResource(R.string.progress_zip)
-    SyncPhase.EXTRACTING ->
-        if (progress.total > 0) {
-            stringResource(R.string.progress_extracting, progress.done, progress.total)
+    SyncPhase.WAITING -> stringResource(R.string.progress_waiting)
+    SyncPhase.COMPARING -> stringResource(R.string.progress_comparing)
+    SyncPhase.DOWNLOADING_ZIP ->
+        if (progress.done > 0) {
+            stringResource(R.string.progress_zip_files, progress.done, progress.total)
         } else {
-            stringResource(R.string.progress_extracting_unknown)
+            stringResource(R.string.progress_zip)
         }
 
     SyncPhase.DOWNLOADING_FILES -> pluralStringResource(
@@ -515,6 +572,73 @@ private fun progressLabel(progress: SyncProgress?): String = when (progress?.pha
     SyncPhase.REMOVING -> stringResource(R.string.progress_removing)
     SyncPhase.SAVING -> stringResource(R.string.progress_saving)
 }
+
+// ------------------------------------------------------------------ conflictos
+
+/** Aviso claro: que se guardo aparte, por que y donde esta. */
+@Composable
+private fun ConflictsCard(detail: DetailState, actions: RepoActions) {
+    val conflicts = detail.conflicts
+    val shown = conflicts.take(MAX_CONFLICTS_SHOWN)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = LocalStatusColors.current.warnContainer,
+            contentColor = LocalStatusColors.current.onWarn,
+        ),
+    ) {
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(Icons.Filled.Warning, contentDescription = null, modifier = Modifier.size(28.dp))
+                Text(
+                    pluralStringResource(R.plurals.conflicts_title, conflicts.size, conflicts.size),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            }
+            Text(stringResource(R.string.conflicts_body), style = MaterialTheme.typography.bodyLarge)
+            detail.conflictDir?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+            }
+            shown.forEach { conflict ->
+                Text(
+                    stringResource(R.string.conflict_line, conflict.path, reasonText(conflict)),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (conflicts.size > shown.size) {
+                Text(
+                    pluralStringResource(R.plurals.changes_more, conflicts.size - shown.size, conflicts.size - shown.size),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (detail.launchPending) {
+                Text(stringResource(R.string.conflicts_godot_waiting), style = MaterialTheme.typography.bodyMedium)
+                BigButton(text = stringResource(R.string.action_open_anyway), onClick = actions.openAfterConflicts, height = 56.dp)
+            }
+            if (!detail.isRunning) {
+                BigButton(
+                    text = stringResource(R.string.conflicts_dismiss),
+                    onClick = actions.dismissConflicts,
+                    outlined = true,
+                    height = 52.dp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun reasonText(conflict: ConflictFile): String = stringResource(
+    when (conflict.reason) {
+        ConflictReason.CHANGED_BOTH -> R.string.conflict_reason_changed
+        ConflictReason.REMOVED_UPSTREAM -> R.string.conflict_reason_removed
+        ConflictReason.UNTRACKED -> R.string.conflict_reason_untracked
+        ConflictReason.RESTORED -> R.string.conflict_reason_restored
+    },
+)
 
 @Composable
 private fun NoticeCard(text: UiText) {

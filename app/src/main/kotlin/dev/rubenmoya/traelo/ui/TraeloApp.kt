@@ -107,7 +107,7 @@ fun TraeloApp(vm: TraeloViewModel) {
                     onRetry = vm::retryRepos,
                     onOpenRepo = { vm.openRepo(it.ref) },
                     onToggleFavorite = { vm.toggleFavorite(it.ref) },
-                    onPullRepo = { vm.openAndPull(it.ref) },
+                    onPullRepo = { vm.openAndPull(it.ref, thenOpen = true) },
                     onOpenGodot = { vm.openInGodot(it.ref) },
                     onDismissGodotMissing = vm::dismissGodotMissing,
                     onOpenSettings = vm::openSettings,
@@ -123,6 +123,9 @@ fun TraeloApp(vm: TraeloViewModel) {
                     actions = RepoActions(
                         back = vm::back,
                         pull = { vm.pull() },
+                        pullAndOpen = { vm.pull(thenOpen = true) },
+                        openAfterConflicts = vm::openAfterConflicts,
+                        dismissConflicts = vm::dismissConflicts,
                         check = vm::runCheck,
                         cancel = vm::cancelPull,
                         selectBranch = vm::selectBranch,

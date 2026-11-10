@@ -367,7 +367,7 @@ private fun RepoCard(repo: RemoteRepo, status: RepoStatus, onClick: () -> Unit, 
     }
 }
 
-/** Favorito: tarjeta mas grande, con "Traer" y "Abrir en Godot" a mano. */
+/** Favorito: tarjeta mas grande, con "Traer y abrir en Godot" en un toque y "Abrir en Godot" a mano. */
 @Composable
 private fun FavoriteCard(
     repo: RemoteRepo,
@@ -398,7 +398,7 @@ private fun FavoriteCard(
                 RepoSubtitle(repo)
                 StatusPill(status)
                 BigButton(
-                    text = stringResource(if (synced) R.string.action_pull else R.string.action_pull_first),
+                    text = stringResource(R.string.action_pull_open),
                     onClick = onPull,
                     height = 56.dp,
                 )

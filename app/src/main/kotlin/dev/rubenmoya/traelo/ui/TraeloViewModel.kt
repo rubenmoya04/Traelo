@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import dev.rubenmoya.traelo.R
 import dev.rubenmoya.traelo.core.Branch
 import dev.rubenmoya.traelo.core.CheckResult
+import dev.rubenmoya.traelo.core.ConflictFile
 import dev.rubenmoya.traelo.core.FileManifestStore
 import dev.rubenmoya.traelo.core.HttpGitHubApi
 import dev.rubenmoya.traelo.core.LocalChanges
@@ -16,6 +17,7 @@ import dev.rubenmoya.traelo.core.RepoRef
 import dev.rubenmoya.traelo.core.SyncEngine
 import dev.rubenmoya.traelo.core.SyncProgress
 import dev.rubenmoya.traelo.core.SyncState
+import dev.rubenmoya.traelo.data.RepoListCache
 import dev.rubenmoya.traelo.data.RepoStateStore
 import dev.rubenmoya.traelo.data.Settings
 import dev.rubenmoya.traelo.data.StoragePermission
@@ -65,6 +67,8 @@ data class SessionState(
 
 data class ReposState(
     val loaded: Boolean = false,
+    /** La lista viene de la cache del movil y todavia no se ha refrescado. */
+    val fromCache: Boolean = false,
     val loading: Boolean = false,
     val refreshing: Boolean = false,
     val repos: List<RemoteRepo> = emptyList(),
@@ -114,6 +118,11 @@ data class DetailState(
     val pendingRestore: LocalChanges? = null,
     /** Carpeta donde se traera (o donde ya esta). */
     val localDir: String = "",
+    /** Archivos del movil que se guardaron aparte en la ultima descarga. */
+    val conflicts: List<ConflictFile> = emptyList(),
+    val conflictDir: String? = null,
+    /** "Traer y abrir" se quedo sin abrir Godot para ensenar antes los conflictos. */
+    val launchPending: Boolean = false,
 ) {
     val isRunning: Boolean get() = sync is SyncUi.Running
 }
@@ -136,6 +145,7 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
     private val tokenStore = TokenStore(app)
     private val settings = Settings(app)
     private val stateStore = RepoStateStore(File(app.filesDir, "repo_states.json"))
+    private val repoCache = RepoListCache(File(app.cacheDir, "repos.json"))
     private val launcher = GodotLauncher(app)
 
     @Volatile
@@ -158,7 +168,7 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
     private val _storageGranted = MutableStateFlow(StoragePermission.isGranted(app))
     val storageGranted: StateFlow<Boolean> = _storageGranted.asStateFlow()
 
-    private val _repos = MutableStateFlow(ReposState())
+    private val _repos = MutableStateFlow(initialRepos())
     val repos: StateFlow<ReposState> = _repos.asStateFlow()
 
     private val _syncStates = MutableStateFlow(stateStore.all())
@@ -197,6 +207,13 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         if (tokenStore.has() && settings.userLogin == null) fetchLoginSilently()
+    }
+
+    /** La ultima lista guardada se ensena al momento; luego se refresca. */
+    private fun initialRepos(): ReposState {
+        if (!tokenStore.has()) return ReposState()
+        val cached = repoCache.load() ?: return ReposState()
+        return ReposState(loaded = true, fromCache = true, repos = cached)
     }
 
     // ---------------------------------------------------------------- navegacion
@@ -285,6 +302,7 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
         tokenCache = null
         settings.userLogin = null
         _session.value = SessionState(hasToken = false)
+        repoCache.clear()
         _repos.value = ReposState()
         _checks.value = emptyMap()
         _detail.value = null
@@ -312,7 +330,12 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- lista de repos
 
     fun ensureReposLoaded() {
-        if (!_repos.value.loaded && !_repos.value.loading) loadRepos(refreshing = false)
+        val state = _repos.value
+        when {
+            state.loading || state.refreshing -> Unit
+            !state.loaded -> loadRepos(refreshing = false)
+            state.fromCache -> loadRepos(refreshing = true)
+        }
     }
 
     /** Deslizar para refrescar: recarga la lista y comprueba los repos ya traidos. */
@@ -330,24 +353,27 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
                 val list = withContext(Dispatchers.IO) { api.listRepos() }
                     .sortedWith(compareByDescending<RemoteRepo> { it.pushedAt ?: "" })
                 _repos.value = ReposState(loaded = true, repos = list)
+                withContext(Dispatchers.IO) { runCatching { repoCache.save(list) } }
                 checkSyncedRepos(list)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 val info = describeError(e)
-                _repos.update { it.copy(loading = false, refreshing = false, error = info, loaded = it.loaded) }
+                _repos.update {
+                    it.copy(loading = false, refreshing = false, error = info, loaded = it.loaded, fromCache = false)
+                }
             }
         }
     }
 
-    /** Comprueba solo los repos que ya se trajeron, de 2 en 2. */
+    /** Comprueba solo los repos que ya se trajeron, de 4 en 4 (sin cambios GitHub responde 304). */
     private fun checkSyncedRepos(list: List<RemoteRepo>) {
         val targets = list.filter { stateStore.get(it.ref) != null && !isSyncing(it.ref) }
         if (targets.isEmpty()) return
         checkAllJob?.cancel()
         _checks.update { old -> old + targets.associate { it.ref.key to RepoStatus.Checking } }
         checkAllJob = viewModelScope.launch {
-            val semaphore = Semaphore(2)
+            val semaphore = Semaphore(4)
             coroutineScope {
                 targets.map { repo -> async { semaphore.withPermit { checkForList(repo.ref) } } }.awaitAll()
             }
@@ -472,8 +498,12 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- traer
 
-    /** Traer (o cambiar de rama y traer). Con [verifyLocal] repone lo que no coincida en el movil. */
-    fun pull(verifyLocal: Boolean = false) {
+    /**
+     * Traer (o cambiar de rama y traer). Con [verifyLocal] repone lo que no coincida en el movil.
+     * Con [thenOpen] abre Godot al acabar, salvo que haya archivos guardados aparte: entonces se
+     * ensenan primero y Godot espera a que la persona lo pida.
+     */
+    fun pull(verifyLocal: Boolean = false, thenOpen: Boolean = false) {
         val d = _detail.value ?: return
         if (d.isRunning) return
         val ref = d.repo.ref
@@ -488,11 +518,28 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
         val saved = d.saved
         val localDir = File(saved?.localDir ?: d.localDir)
         updateDetail(ref) {
-            it.copy(sync = SyncUi.Running(null), checking = false, notice = null, error = null, pendingRestore = null)
+            it.copy(
+                sync = SyncUi.Running(null),
+                checking = false,
+                notice = null,
+                error = null,
+                pendingRestore = null,
+                conflicts = emptyList(),
+                conflictDir = null,
+                launchPending = false,
+            )
         }
         syncJob = viewModelScope.launch {
+            val started = System.currentTimeMillis()
             try {
-                val result = engine.pull(ref, branch, localDir, saved, verifyLocal) { progress ->
+                val result = engine.pull(
+                    ref,
+                    branch,
+                    localDir,
+                    saved,
+                    verifyLocal,
+                    onConflict = { conflict -> updateDetail(ref) { it.copy(conflicts = it.conflicts + conflict) } },
+                ) { progress ->
                     updateDetail(ref) { cur ->
                         if (cur.sync is SyncUi.Running) cur.copy(sync = SyncUi.Running(progress)) else cur
                     }
@@ -500,17 +547,23 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { stateStore.put(result.newState) }
                 _syncStates.value = stateStore.all()
                 setCheck(ref, RepoStatus.UpToDate)
+                val seconds = ((System.currentTimeMillis() - started) / 1000).toInt()
                 updateDetail(ref) {
                     it.copy(
                         saved = result.newState,
                         branch = result.newState.branch,
                         check = CheckResult.UpToDate(result.newState.headSha),
                         sync = SyncUi.Idle,
-                        notice = pulledNotice(result.downloaded, result.removed, result.skipped.size, result.ignored),
+                        notice = pulledNotice(result.downloaded, result.removed, result.skipped.size, result.ignored, result.bytesDownloaded, seconds),
                         localDir = result.newState.localDir,
+                        conflicts = result.conflicts,
+                        conflictDir = result.conflictDir,
+                        launchPending = thenOpen && result.conflicts.isNotEmpty(),
                     )
                 }
-                refreshProject()
+                val project = withContext(Dispatchers.IO) { ProjectFinder.find(File(result.newState.localDir)) }
+                updateDetail(ref) { it.copy(project = project, projectChecked = true) }
+                if (thenOpen && result.conflicts.isEmpty()) launchGodot(project?.dir)
             } catch (e: CancellationException) {
                 updateDetail(ref) { it.copy(sync = SyncUi.Idle, notice = UiText.of(R.string.notice_cancelled)) }
                 throw e
@@ -518,6 +571,18 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
                 val info = fixAction(describeError(e))
                 updateDetail(ref) { it.copy(sync = SyncUi.Idle, error = info) }
             }
+        }
+    }
+
+    /** Despues de ver los conflictos: abrir Godot como pidio "Traer y abrir". */
+    fun openAfterConflicts() {
+        updateDetail(_detail.value?.repo?.ref ?: return) { it.copy(launchPending = false) }
+        openInGodot()
+    }
+
+    fun dismissConflicts() {
+        updateDetail(_detail.value?.repo?.ref ?: return) {
+            it.copy(conflicts = emptyList(), conflictDir = null, launchPending = false)
         }
     }
 
@@ -633,7 +698,11 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openInGodot() {
         val d = _detail.value ?: return
-        when (launcher.launch(d.project?.dir, _launchDirect.value)) {
+        launchGodot(d.project?.dir)
+    }
+
+    private fun launchGodot(projectDir: File?) {
+        when (launcher.launch(projectDir, _launchDirect.value)) {
             LaunchResult.NotInstalled -> _godotMissing.value = true
             LaunchResult.Failed -> _messages.tryEmit(UiText.of(R.string.msg_godot_failed))
             LaunchResult.FellBackToPlain -> _messages.tryEmit(UiText.of(R.string.msg_godot_fallback))
@@ -653,10 +722,10 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Abre el repo y empieza a traerlo (boton "Traer" de un favorito). */
-    fun openAndPull(ref: RepoRef) {
+    /** Abre el repo y empieza a traerlo (botones de un favorito). Con [thenOpen] abre Godot al acabar. */
+    fun openAndPull(ref: RepoRef, thenOpen: Boolean = false) {
         openRepo(ref)
-        pull()
+        pull(thenOpen = thenOpen)
     }
 
     fun toggleFavorite(ref: RepoRef) {
@@ -675,10 +744,11 @@ class TraeloViewModel(app: Application) : AndroidViewModel(app) {
     private fun fixAction(info: ErrorInfo): ErrorInfo =
         if (info.action == ErrorAction.GRANT_PERMISSION && _storageGranted.value) info.copy(action = null) else info
 
-    private fun pulledNotice(downloaded: Int, removed: Int, skipped: Int, ignored: Int): UiText {
+    private fun pulledNotice(downloaded: Int, removed: Int, skipped: Int, ignored: Int, bytes: Long, seconds: Int): UiText {
         if (downloaded == 0 && removed == 0) return UiText.of(R.string.notice_nothing_new)
         val parts = ArrayList<UiText>()
         parts += UiText.plural(R.plurals.notice_downloaded, downloaded)
+        if (bytes > 0) parts += UiText.plural(R.plurals.notice_size, seconds, formatMegabytes(bytes), seconds)
         if (removed > 0) parts += UiText.plural(R.plurals.notice_removed, removed)
         if (skipped > 0) parts += UiText.plural(R.plurals.notice_skipped, skipped)
         if (ignored > 0) parts += UiText.plural(R.plurals.notice_ignored, ignored)
