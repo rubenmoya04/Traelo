@@ -101,7 +101,13 @@ docs/
 - `*.md` ignora por nombre en cualquier carpeta.
 - Un asterisco vale cualquier nombre dentro de una carpeta y dos seguidos, cualquier profundidad.
 
-Lo ignorado que ya estaba en el móvil no se borra: solo deja de actualizarse.
+Qué pasa con lo ignorado que ya estaba en el móvil:
+
+- Si lo trajo Tráelo y no lo has tocado, se borra al traer cambios. Igual si ya no existe en la rama.
+- Si lo trajo Tráelo pero lo cambiaste en el móvil, va a la carpeta de conflictos (ver **Conflictos**) y te avisa.
+- Lo que Tráelo no trajo (tuyo o de Godot, como los `.uid`) no se borra nunca. Tampoco se toca nada de `.godot`.
+- Las carpetas que se quedan vacías se quitan.
+- Si viene de una versión vieja que no apuntaba la huella de esos archivos, no se borran a ciegas. La app dice cuántos archivos ignorados siguen en el móvil y te ofrece **Quitar lo ignorado**, que los mueve a la carpeta de conflictos (no los borra), con confirmación. Con **Traer y abrir en Godot** espera a que lo veas, para que Godot no se queje de scripts viejos.
 
 ## Estructura
 
